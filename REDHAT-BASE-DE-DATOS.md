@@ -1,6 +1,6 @@
 # Crear y ver la base de datos en Red Hat
 
-El servicio `clinica-alejandra` reúne React y Express. MySQL necesita su propio almacenamiento persistente. Crear MySQL no separa el frontend del backend ni requiere cambiar su URL. El panel Adminer es una herramienta opcional para ver las tablas, parecida a phpMyAdmin.
+El servicio `clinica-alejandra` reúne React y Express. MySQL necesita su propio almacenamiento persistente. Crear MySQL no separa el frontend del backend ni requiere cambiar su URL.
 
 ## 1. Crear MySQL con tablas y ejemplos
 
@@ -29,38 +29,25 @@ oc logs deployment/historia-clinica-db -n maria-guevara-rio-dev --tail=50
 
 Los registros del primer inicio incluyen: `Clínica inicializada: 15 pacientes, 6 médicos y 24 consultas.` Al reiniciar se conservan las tablas y los cambios; el inicializador no vuelve a importar los ejemplos. Si encuentra tablas anteriores sin su marca de instalación, se detiene para no sobrescribirlas. No borres el PVC para resolver ese caso.
 
-## 2. Abrir un panel parecido a phpMyAdmin
+## 2. Ver las tablas desde la terminal
 
-Importa **otro YAML** con el contenido de [deploy/adminer.yaml](deploy/adminer.yaml), o ejecuta:
+Abre **>_** en la consola y entra al cliente MySQL dentro del pod:
 
 ```bash
-oc apply -n maria-guevara-rio-dev -f https://raw.githubusercontent.com/Alejandra-Guevara/clinica-alejandra/main/deploy/adminer.yaml
-oc rollout status deployment/clinica-db-admin -n maria-guevara-rio-dev --timeout=300s
-oc get route clinica-db-admin -n maria-guevara-rio-dev -o jsonpath='https://{.spec.host}{"\n"}'
+oc exec -it deployment/historia-clinica-db -n maria-guevara-rio-dev -- mysql -h127.0.0.1 -u 'malejaguevara14@gmail.com' -p clinica-alejandra
 ```
 
-Abre el enlace HTTPS que imprima el último comando. También aparece en **Redes → Rutas → clinica-db-admin**. Es una URL del panel; la aplicación conserva su dirección actual.
-
-En Adminer introduce:
-
-| Campo | Valor |
-| --- | --- |
-| Sistema | MySQL |
-| Servidor | `historia-clinica-db` |
-| Usuario | `malejaguevara14@gmail.com` |
-| Contraseña | `Hola12345678` |
-| Base de datos | `clinica-alejandra` |
-
-Pulsa **Entrar / Login**. Verás las tablas; abre `pacientes` y pulsa **Seleccionar datos** para consultar los registros. En **Comando SQL** puedes ejecutar:
+Cuando pida la contraseña, escríbela y pulsa Enter. Luego puedes consultar:
 
 ```sql
+SHOW TABLES;
 SELECT numero_documento, nombres, apellidos FROM pacientes;
-SELECT COUNT(*) AS pacientes FROM pacientes;
-SELECT COUNT(*) AS medicos FROM medicos;
-SELECT COUNT(*) AS consultas FROM consultas;
+SELECT COUNT(*) FROM pacientes;
+SELECT COUNT(*) FROM medicos;
+SELECT COUNT(*) FROM consultas;
 ```
 
-Los conteos iniciales esperados son **15**, **6** y **24**. El archivo [sql/redhat-demo.sql](sql/redhat-demo.sql) contiene el mismo esquema y datos embebidos en el YAML; no necesitas importarlo otra vez.
+Los conteos iniciales esperados son **15**, **6** y **24**. Escribe `exit` para salir. El archivo [sql/redhat-demo.sql](sql/redhat-demo.sql) contiene el esquema y los ejemplos que se cargaron.
 
 ## 3. Comprobar la aplicación
 
@@ -76,21 +63,14 @@ Debe responder con HTTP 200 y:
 {"data":{"status":"ok","database":"clinica-alejandra"}}
 ```
 
-En `/login`, entra con `malejaguevara14@gmail.com` y `Hola12345678`. En Pacientes deben aparecer los 15 ejemplos. Crea un paciente desde la aplicación, recarga y consulta `pacientes` en Adminer para verificar que se guardó en MySQL. Si la salud responde 503, revisa primero el pod y sus registros con los comandos anteriores.
+En `/login`, entra con tu correo administrador y contraseña. En Pacientes deben aparecer los 15 ejemplos. Si la salud responde 503, revisa primero el pod y sus registros con los comandos anteriores.
 
 ## Conservación y respaldo
 
-Apagar tu computador no apaga MySQL de Red Hat. El PVC conserva los datos cuando se reinicia el pod; eliminar el PVC o el proyecto sí puede eliminarlos. Developer Sandbox es un entorno temporal: exporta un respaldo desde **Exportar** en Adminer antes de que termine tu periodo. GitHub guarda el código y los ejemplos iniciales, no los registros nuevos que crees en Red Hat.
-
-Si ya no necesitas el panel, puedes retirarlo sin tocar MySQL ni su PVC:
-
-```bash
-oc delete deployment/clinica-db-admin service/clinica-db-admin route/clinica-db-admin -n maria-guevara-rio-dev
-```
+Apagar tu computador no apaga MySQL de Red Hat. El PVC conserva los datos cuando se reinicia el pod; eliminar el PVC o el proyecto sí puede eliminarlos. Developer Sandbox es un entorno temporal: conserva una copia de respaldo antes de que termine tu periodo. GitHub guarda el código y los ejemplos iniciales, no los registros nuevos que crees en Red Hat.
 
 ## Referencias
 
 - [Imagen MySQL para OpenShift: inicialización y volumen de datos](https://github.com/sclorg/mysql-container/blob/master/8.4/root/usr/share/container-scripts/mysql/README.md).
-- [Imagen oficial de Adminer](https://hub.docker.com/_/adminer).
 - [Almacenamiento persistente en OpenShift](https://docs.redhat.com/en/documentation/openshift_container_platform/4.20/html/storage/understanding-persistent-storage).
 - [Duración del Developer Sandbox](https://developers.redhat.com/developer-sandbox).

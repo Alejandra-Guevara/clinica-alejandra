@@ -9,7 +9,7 @@ frontend/       Interfaz React/Vite y sus pruebas
 backend/        Express, autenticación, MySQL, scripts y migraciones
 sql/schema.sql  Esquema original para una base vacía
 Dockerfile      Construye React y lo incluye en el servidor Express
-deploy/         Aplicación y manifiestos opcionales de MySQL y Adminer
+deploy/         Aplicación y manifiesto de MySQL
 scripts/        Validación local automatizada
 ```
 
@@ -38,7 +38,7 @@ El script no crea otro frontend o backend, no modifica los servicios antiguos y 
 
 ## Crear MySQL y consultar sus tablas
 
-Si desplegaste la aplicación desde cero y todavía no existe MySQL en Red Hat, sigue [REDHAT-BASE-DE-DATOS.md](REDHAT-BASE-DE-DATOS.md). El manifiesto [deploy/mysql-demo.yaml](deploy/mysql-demo.yaml) crea el almacenamiento persistente, las tablas y los ejemplos completos sin configurar variables manualmente. [deploy/adminer.yaml](deploy/adminer.yaml) agrega un panel opcional parecido a phpMyAdmin. La aplicación React/Express ya desplegada no necesita reconstruirse.
+Si desplegaste la aplicación desde cero y todavía no existe MySQL en Red Hat, sigue [REDHAT-BASE-DE-DATOS.md](REDHAT-BASE-DE-DATOS.md). El manifiesto [deploy/mysql-demo.yaml](deploy/mysql-demo.yaml) crea el almacenamiento persistente, las tablas y los ejemplos completos sin configurar variables manualmente. La aplicación React/Express ya desplegada no necesita reconstruirse.
 
 ## Usar una base de datos existente
 
