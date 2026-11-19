@@ -9,7 +9,7 @@ frontend/       Interfaz React/Vite y sus pruebas
 backend/        Express, autenticación, MySQL, scripts y migraciones
 sql/schema.sql  Esquema original para una base vacía
 Dockerfile      Construye React y lo incluye en el servidor Express
-deploy/         Un solo Deployment de OpenShift
+deploy/         Aplicación y manifiestos opcionales de MySQL y Adminer
 scripts/        Validación local automatizada
 ```
 
@@ -36,7 +36,11 @@ bash /tmp/deploy-clinica.sh
 
 El script no crea otro frontend o backend, no modifica los servicios antiguos y no cambia MySQL. Si ya creaste un servicio Serverless con el mismo nombre, se detiene para evitar duplicar su Route.
 
-## Base de datos existente
+## Crear MySQL y consultar sus tablas
+
+Si desplegaste la aplicación desde cero y todavía no existe MySQL en Red Hat, sigue [REDHAT-BASE-DE-DATOS.md](REDHAT-BASE-DE-DATOS.md). El manifiesto [deploy/mysql-demo.yaml](deploy/mysql-demo.yaml) crea el almacenamiento persistente, las tablas y los ejemplos completos sin configurar variables manualmente. [deploy/adminer.yaml](deploy/adminer.yaml) agrega un panel opcional parecido a phpMyAdmin. La aplicación React/Express ya desplegada no necesita reconstruirse.
+
+## Usar una base de datos existente
 
 La configuración académica está integrada en [backend/src/config/demo.js](backend/src/config/demo.js): servicio MySQL `historia-clinica-db:3306`, esquema `clinica-alejandra` y la cuenta de demostración proporcionada por la propietaria. No hay una URL de frontend fija porque todo comparte origen. La conexión interna de esta demostración no exige TLS.
 

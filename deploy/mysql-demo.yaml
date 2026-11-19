@@ -1,0 +1,767 @@
+# MySQL 8.4 para la demostración universitaria. No modifica la aplicación.
+# Importar solo en maria-guevara-rio-dev. Las credenciales son de demostración.
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: historia-clinica-mysql-data
+  namespace: maria-guevara-rio-dev
+spec:
+  accessModes: [ReadWriteOnce]
+  resources:
+    requests:
+      storage: 1Gi
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: historia-clinica-mysql-init
+  namespace: maria-guevara-rio-dev
+data:
+  90-clinica-demo.sh: |
+    # Los scripts mysql-init se ejecutan con el servidor local ya disponible.
+    # La marca en el volumen evita volver a cargar y sobrescribir los ejemplos.
+    if [ ! -f /var/lib/mysql/data/.clinica-demo-initialized ]; then
+      existing=$(mysql $mysql_flags --batch --skip-column-names -e "SELECT COUNT(*) FROM information_schema.tables WHERE table_schema='clinica-alejandra'") || exit 1
+      if [ "$existing" != "0" ]; then
+        echo 'La base ya tiene tablas: no se sobrescribe. Revise su instalación antes de importar ejemplos.' >&2
+        exit 1
+      fi
+      mysql $mysql_flags --default-character-set=utf8mb4 < /opt/app-root/src/mysql-init/access.sql || exit 1
+      mysql $mysql_flags --default-character-set=utf8mb4 --database=clinica-alejandra < /opt/app-root/src/mysql-init/database.sql || exit 1
+      touch /var/lib/mysql/data/.clinica-demo-initialized || exit 1
+      echo 'Clínica inicializada: 15 pacientes, 6 médicos y 24 consultas.'
+    else
+      echo 'Base existente conservada; no se vuelven a importar los ejemplos.'
+    fi
+  access.sql: |
+    CREATE DATABASE IF NOT EXISTS `clinica-alejandra` CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
+    CREATE USER IF NOT EXISTS 'malejaguevara14@gmail.com'@'%' IDENTIFIED BY 'Hola12345678';
+    GRANT ALL PRIVILEGES ON `clinica-alejandra`.* TO 'malejaguevara14@gmail.com'@'%';
+  database.sql: |
+    -- Instalación nueva con datos sintéticos; no importar sobre tablas existentes.
+    -- Esquema original, estado final de migraciones 001-005 y fixtures del proyecto.
+    SET NAMES utf8mb4;
+    SET FOREIGN_KEY_CHECKS=0;
+
+    -- 1. SEGURIDAD -------------------------------------------------
+
+    CREATE TABLE usuarios (
+        id_usuario BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+        nombres VARCHAR(100) NOT NULL,
+        apellidos VARCHAR(100) NOT NULL,
+        email VARCHAR(190) NOT NULL UNIQUE,
+        password_hash VARCHAR(255) NOT NULL,
+        estado ENUM('activo','inactivo','bloqueado') NOT NULL DEFAULT 'activo',
+        creado_en DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        actualizado_en DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+    ) ENGINE=InnoDB;
+
+    CREATE TABLE roles (
+        id_rol INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+        nombre VARCHAR(50) NOT NULL UNIQUE,
+        descripcion VARCHAR(255)
+    ) ENGINE=InnoDB;
+
+    CREATE TABLE usuario_rol (
+        id_usuario BIGINT UNSIGNED NOT NULL,
+        id_rol INT UNSIGNED NOT NULL,
+        PRIMARY KEY (id_usuario, id_rol),
+        CONSTRAINT fk_ur_usuario FOREIGN KEY (id_usuario)
+            REFERENCES usuarios(id_usuario) ON DELETE CASCADE,
+        CONSTRAINT fk_ur_rol FOREIGN KEY (id_rol)
+            REFERENCES roles(id_rol) ON DELETE RESTRICT
+    ) ENGINE=InnoDB;
+
+    -- 2. PERSONAS Y PROFESIONALES ----------------------------------
+
+    CREATE TABLE pacientes (
+        id_paciente BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+        id_usuario BIGINT UNSIGNED NULL UNIQUE, -- Solo si usa portal de pacientes
+        tipo_documento VARCHAR(20) NOT NULL,
+        numero_documento VARCHAR(40) NOT NULL,
+        nombres VARCHAR(100) NOT NULL,
+        apellidos VARCHAR(100) NOT NULL,
+        fecha_nacimiento DATE NOT NULL,
+        sexo_registrado VARCHAR(30),
+        telefono VARCHAR(30),
+        email VARCHAR(190),
+        direccion VARCHAR(255),
+        grupo_sanguineo VARCHAR(5),
+        creado_en DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        UNIQUE KEY uq_paciente_documento (tipo_documento, numero_documento),
+        CONSTRAINT fk_paciente_usuario FOREIGN KEY (id_usuario)
+            REFERENCES usuarios(id_usuario) ON DELETE RESTRICT
+    ) ENGINE=InnoDB;
+
+    CREATE TABLE medicos (
+        id_medico BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+        id_usuario BIGINT UNSIGNED NOT NULL UNIQUE,
+        numero_registro_profesional VARCHAR(60) NOT NULL UNIQUE,
+        activo BOOLEAN NOT NULL DEFAULT TRUE,
+        CONSTRAINT fk_medico_usuario FOREIGN KEY (id_usuario)
+            REFERENCES usuarios(id_usuario) ON DELETE RESTRICT
+    ) ENGINE=InnoDB;
+
+    CREATE TABLE especialidades (
+        id_especialidad INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+        nombre VARCHAR(120) NOT NULL UNIQUE,
+        descripcion VARCHAR(255)
+    ) ENGINE=InnoDB;
+
+    CREATE TABLE medico_especialidad (
+        id_medico BIGINT UNSIGNED NOT NULL,
+        id_especialidad INT UNSIGNED NOT NULL,
+        PRIMARY KEY (id_medico, id_especialidad),
+        CONSTRAINT fk_me_medico FOREIGN KEY (id_medico)
+            REFERENCES medicos(id_medico) ON DELETE CASCADE,
+        CONSTRAINT fk_me_especialidad FOREIGN KEY (id_especialidad)
+            REFERENCES especialidades(id_especialidad) ON DELETE RESTRICT
+    ) ENGINE=InnoDB;
+
+    -- 3. HISTORIA CLINICA Y CONTEXTO DEL PACIENTE ------------------
+
+    CREATE TABLE historias_clinicas (
+        id_historia BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+        id_paciente BIGINT UNSIGNED NOT NULL UNIQUE, -- 1 historia por paciente
+        numero_historia VARCHAR(40) NOT NULL UNIQUE,
+        fecha_apertura DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        estado ENUM('activa','archivada') NOT NULL DEFAULT 'activa',
+        CONSTRAINT fk_historia_paciente FOREIGN KEY (id_paciente)
+            REFERENCES pacientes(id_paciente) ON DELETE RESTRICT
+    ) ENGINE=InnoDB;
+
+    CREATE TABLE alergias (
+        id_alergia INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+        nombre VARCHAR(150) NOT NULL UNIQUE,
+        tipo ENUM('medicamento','alimento','ambiental','otra') NOT NULL DEFAULT 'otra',
+        descripcion VARCHAR(255)
+    ) ENGINE=InnoDB;
+
+    CREATE TABLE paciente_alergia (
+        id_paciente_alergia BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+        id_paciente BIGINT UNSIGNED NOT NULL,
+        id_alergia INT UNSIGNED NOT NULL,
+        reaccion VARCHAR(255),
+        severidad ENUM('leve','moderada','grave','desconocida') NOT NULL DEFAULT 'desconocida',
+        registrada_en DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        UNIQUE KEY uq_paciente_alergia (id_paciente, id_alergia),
+        CONSTRAINT fk_pa_paciente FOREIGN KEY (id_paciente)
+            REFERENCES pacientes(id_paciente) ON DELETE RESTRICT,
+        CONSTRAINT fk_pa_alergia FOREIGN KEY (id_alergia)
+            REFERENCES alergias(id_alergia) ON DELETE RESTRICT
+    ) ENGINE=InnoDB;
+
+    CREATE TABLE antecedentes (
+        id_antecedente INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+        nombre VARCHAR(150) NOT NULL UNIQUE,
+        descripcion VARCHAR(255)
+    ) ENGINE=InnoDB;
+
+    CREATE TABLE paciente_antecedente (
+        id_paciente_antecedente BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+        id_paciente BIGINT UNSIGNED NOT NULL,
+        id_antecedente INT UNSIGNED NOT NULL,
+        tipo ENUM('personal','familiar','quirurgico','farmacologico','habito','otro') NOT NULL,
+        parentesco VARCHAR(50), -- P. ej. madre, padre, hermano (solo familiar)
+        detalle TEXT,
+        fecha_referencia DATE NULL,
+        registrado_en DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        KEY idx_pac_ant (id_paciente, tipo),
+        CONSTRAINT fk_pan_paciente FOREIGN KEY (id_paciente)
+            REFERENCES pacientes(id_paciente) ON DELETE RESTRICT,
+        CONSTRAINT fk_pan_antecedente FOREIGN KEY (id_antecedente)
+            REFERENCES antecedentes(id_antecedente) ON DELETE RESTRICT
+    ) ENGINE=InnoDB;
+
+    -- 4. CONSULTAS: TODA LA ATENCION CLINICA AQUI ------------------
+
+    CREATE TABLE consultas (
+        id_consulta BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+        id_historia BIGINT UNSIGNED NOT NULL,
+        id_medico BIGINT UNSIGNED NOT NULL,
+        fecha_hora DATETIME NOT NULL,
+        tipo_consulta ENUM('primera_vez','control','urgencia','otra') NOT NULL DEFAULT 'otra',
+        motivo_consulta TEXT NOT NULL,
+        enfermedad_actual TEXT,
+        anamnesis TEXT,
+        revision_sistemas TEXT,
+        examen_fisico TEXT,
+        analisis_clinico TEXT,
+        plan_manejo TEXT,
+        observaciones TEXT,
+        estado ENUM('borrador','finalizada','anulada') NOT NULL DEFAULT 'borrador',
+        finalizada_en DATETIME NULL,
+        creado_en DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        actualizado_en DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+        KEY idx_consultas_historia_fecha (id_historia, fecha_hora),
+        KEY idx_consultas_medico_fecha (id_medico, fecha_hora),
+        CONSTRAINT fk_consulta_historia FOREIGN KEY (id_historia)
+            REFERENCES historias_clinicas(id_historia) ON DELETE RESTRICT,
+        CONSTRAINT fk_consulta_medico FOREIGN KEY (id_medico)
+            REFERENCES medicos(id_medico) ON DELETE RESTRICT
+    ) ENGINE=InnoDB;
+
+    CREATE TABLE diagnosticos (
+        id_diagnostico INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+        codigo_cie10 VARCHAR(20) NOT NULL UNIQUE,
+        nombre VARCHAR(200) NOT NULL,
+        descripcion TEXT
+    ) ENGINE=InnoDB;
+
+    CREATE TABLE consulta_diagnostico (
+        id_consulta BIGINT UNSIGNED NOT NULL,
+        id_diagnostico INT UNSIGNED NOT NULL,
+        tipo ENUM('principal','secundario','presuntivo') NOT NULL DEFAULT 'secundario',
+        observaciones VARCHAR(255),
+        PRIMARY KEY (id_consulta, id_diagnostico),
+        CONSTRAINT fk_cd_consulta FOREIGN KEY (id_consulta)
+            REFERENCES consultas(id_consulta) ON DELETE RESTRICT,
+        CONSTRAINT fk_cd_diagnostico FOREIGN KEY (id_diagnostico)
+            REFERENCES diagnosticos(id_diagnostico) ON DELETE RESTRICT
+    ) ENGINE=InnoDB;
+
+    CREATE TABLE signos_vitales (
+        id_signos BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+        id_consulta BIGINT UNSIGNED NOT NULL,
+        medido_en DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        presion_sistolica SMALLINT UNSIGNED,
+        presion_diastolica SMALLINT UNSIGNED,
+        frecuencia_cardiaca SMALLINT UNSIGNED,
+        frecuencia_respiratoria SMALLINT UNSIGNED,
+        temperatura_c DECIMAL(4,1),
+        peso_kg DECIMAL(6,2),
+        talla_cm DECIMAL(5,2),
+        saturacion_oxigeno_pct DECIMAL(5,2),
+        KEY idx_signos_consulta (id_consulta, medido_en),
+        CONSTRAINT fk_signos_consulta FOREIGN KEY (id_consulta)
+            REFERENCES consultas(id_consulta) ON DELETE RESTRICT,
+        CONSTRAINT chk_signos_sat CHECK (
+            saturacion_oxigeno_pct IS NULL OR saturacion_oxigeno_pct BETWEEN 0 AND 100
+        )
+    ) ENGINE=InnoDB;
+
+    -- 5. FORMULAS Y MEDICAMENTOS ----------------------------------
+
+    CREATE TABLE medicamentos (
+        id_medicamento INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+        nombre VARCHAR(150) NOT NULL,
+        concentracion VARCHAR(100),
+        forma_farmaceutica VARCHAR(100),
+        codigo_catalogo VARCHAR(60) UNIQUE
+    ) ENGINE=InnoDB;
+
+    CREATE TABLE recetas (
+        id_receta BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+        id_consulta BIGINT UNSIGNED NOT NULL,
+        fecha_emision DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        indicaciones_generales TEXT,
+        KEY idx_recetas_consulta (id_consulta),
+        CONSTRAINT fk_receta_consulta FOREIGN KEY (id_consulta)
+            REFERENCES consultas(id_consulta) ON DELETE RESTRICT
+    ) ENGINE=InnoDB;
+
+    CREATE TABLE receta_detalle (
+        id_receta_detalle BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+        id_receta BIGINT UNSIGNED NOT NULL,
+        id_medicamento INT UNSIGNED NOT NULL,
+        dosis VARCHAR(100) NOT NULL,
+        via_administracion VARCHAR(80),
+        frecuencia VARCHAR(100),
+        duracion VARCHAR(100),
+        cantidad VARCHAR(80),
+        indicaciones TEXT,
+        KEY idx_rd_receta (id_receta),
+        CONSTRAINT fk_rd_receta FOREIGN KEY (id_receta)
+            REFERENCES recetas(id_receta) ON DELETE RESTRICT,
+        CONSTRAINT fk_rd_medicamento FOREIGN KEY (id_medicamento)
+            REFERENCES medicamentos(id_medicamento) ON DELETE RESTRICT
+    ) ENGINE=InnoDB;
+
+    -- 6. EXAMENES Y RESULTADOS ------------------------------------
+
+    CREATE TABLE examenes (
+        id_examen INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+        nombre VARCHAR(160) NOT NULL,
+        descripcion VARCHAR(255),
+        codigo_catalogo VARCHAR(60) UNIQUE
+    ) ENGINE=InnoDB;
+
+    CREATE TABLE ordenes_examen (
+        id_orden BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+        id_consulta BIGINT UNSIGNED NOT NULL,
+        fecha_emision DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        observaciones TEXT,
+        KEY idx_orden_consulta (id_consulta),
+        CONSTRAINT fk_orden_consulta FOREIGN KEY (id_consulta)
+            REFERENCES consultas(id_consulta) ON DELETE RESTRICT
+    ) ENGINE=InnoDB;
+
+    CREATE TABLE orden_examen_detalle (
+        id_orden_detalle BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+        id_orden BIGINT UNSIGNED NOT NULL,
+        id_examen INT UNSIGNED NOT NULL,
+        estado ENUM('solicitado','en_proceso','informado','cancelado')
+            NOT NULL DEFAULT 'solicitado',
+        resultado_resumen TEXT,
+        fecha_resultado DATETIME NULL,
+        KEY idx_oed_orden (id_orden),
+        CONSTRAINT fk_oed_orden FOREIGN KEY (id_orden)
+            REFERENCES ordenes_examen(id_orden) ON DELETE RESTRICT,
+        CONSTRAINT fk_oed_examen FOREIGN KEY (id_examen)
+            REFERENCES examenes(id_examen) ON DELETE RESTRICT
+    ) ENGINE=InnoDB;
+
+    -- 7. AUDITORIA BASICA DE ACCESOS A REGISTROS ------------------
+    -- Requiere que el backend escriba cada evento; para un sistema
+    -- real tambien se necesitan controles de integridad e inmutabilidad.
+
+    CREATE TABLE auditoria_accesos (
+        id_auditoria BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+        id_usuario BIGINT UNSIGNED NOT NULL,
+        accion ENUM('consulta','creacion','modificacion','anulacion','exportacion') NOT NULL,
+        entidad VARCHAR(80) NOT NULL,
+        id_registro BIGINT UNSIGNED NOT NULL,
+        fecha_hora DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        ip_origen VARCHAR(45),
+        detalles JSON NULL,
+        KEY idx_auditoria_usuario_fecha (id_usuario, fecha_hora),
+        KEY idx_auditoria_entidad_registro (entidad, id_registro),
+        CONSTRAINT fk_auditoria_usuario FOREIGN KEY (id_usuario)
+            REFERENCES usuarios(id_usuario) ON DELETE RESTRICT
+    ) ENGINE=InnoDB;
+
+    CREATE TABLE schema_migrations (id VARCHAR(120) PRIMARY KEY, applied_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP) ENGINE=InnoDB;
+    ALTER TABLE consultas ADD COLUMN motivo_anulacion VARCHAR(255) NULL;
+
+    ALTER TABLE consultas ADD COLUMN anulada_en DATETIME NULL;
+
+    CREATE TABLE IF NOT EXISTS consultas_adendas (
+        id_adenda BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+        id_consulta BIGINT UNSIGNED NOT NULL,
+        id_usuario BIGINT UNSIGNED NOT NULL,
+        contenido TEXT NOT NULL,
+        creado_en DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        KEY idx_adenda_consulta_fecha (id_consulta, creado_en),
+        CONSTRAINT fk_adenda_consulta FOREIGN KEY (id_consulta) REFERENCES consultas(id_consulta) ON DELETE RESTRICT,
+        CONSTRAINT fk_adenda_usuario FOREIGN KEY (id_usuario) REFERENCES usuarios(id_usuario) ON DELETE RESTRICT
+      ) ENGINE=InnoDB;
+
+    CREATE TABLE IF NOT EXISTS historia_medico (
+        id_asignacion BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+        id_historia BIGINT UNSIGNED NOT NULL,
+        id_medico BIGINT UNSIGNED NOT NULL,
+        asignado_por BIGINT UNSIGNED NOT NULL,
+        asignado_en DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        estado ENUM('activa','inactiva') NOT NULL DEFAULT 'activa',
+        UNIQUE KEY uq_historia_medico (id_historia,id_medico),
+        KEY idx_hm_medico_estado (id_medico,estado),
+        CONSTRAINT fk_hm_historia FOREIGN KEY (id_historia) REFERENCES historias_clinicas(id_historia) ON DELETE RESTRICT,
+        CONSTRAINT fk_hm_medico FOREIGN KEY (id_medico) REFERENCES medicos(id_medico) ON DELETE RESTRICT,
+        CONSTRAINT fk_hm_asignador FOREIGN KEY (asignado_por) REFERENCES usuarios(id_usuario) ON DELETE RESTRICT
+      ) ENGINE=InnoDB;
+
+    INSERT IGNORE INTO historia_medico (id_historia,id_medico,asignado_por)
+        SELECT DISTINCT c.id_historia,c.id_medico,m.id_usuario FROM consultas c
+        JOIN medicos m ON m.id_medico=c.id_medico;
+
+    ALTER TABLE usuarios ADD COLUMN session_version INT UNSIGNED NOT NULL DEFAULT 0;
+
+    CREATE TABLE IF NOT EXISTS demo_seed_registry (
+        seed_key VARCHAR(120) PRIMARY KEY,
+        entity VARCHAR(80) NOT NULL,
+        record_id BIGINT UNSIGNED NULL,
+        created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        KEY idx_demo_seed_entity_record (entity,record_id)
+      ) ENGINE=InnoDB;
+
+    /*!40103 SET @OLD_TIME_ZONE=@@TIME_ZONE */;
+    /*!40103 SET TIME_ZONE='+00:00' */;
+    /*!40014 SET @OLD_FOREIGN_KEY_CHECKS=@@FOREIGN_KEY_CHECKS, FOREIGN_KEY_CHECKS=0 */;
+    /*!40101 SET @OLD_SQL_MODE=@@SQL_MODE, SQL_MODE='NO_AUTO_VALUE_ON_ZERO' */;
+    /*!40111 SET @OLD_SQL_NOTES=@@SQL_NOTES, SQL_NOTES=0 */;
+
+    INSERT INTO `alergias` (`id_alergia`, `nombre`, `tipo`, `descripcion`) VALUES (1,'Polen','ambiental','Rinitis estacional referida.');
+    INSERT INTO `alergias` (`id_alergia`, `nombre`, `tipo`, `descripcion`) VALUES (2,'Maní','alimento','Reacción cutánea referida tras exposición.');
+    INSERT INTO `alergias` (`id_alergia`, `nombre`, `tipo`, `descripcion`) VALUES (3,'Fragancias','otra','Irritación cutánea de contacto referida.');
+
+    INSERT INTO `antecedentes` (`id_antecedente`, `nombre`, `descripcion`) VALUES (1,'Hipertensión arterial','Antecedente personal en seguimiento clínico.');
+    INSERT INTO `antecedentes` (`id_antecedente`, `nombre`, `descripcion`) VALUES (2,'Migraña','Episodios previos referidos por el paciente.');
+    INSERT INTO `antecedentes` (`id_antecedente`, `nombre`, `descripcion`) VALUES (3,'Dislipidemia','Antecedente en seguimiento.');
+    INSERT INTO `antecedentes` (`id_antecedente`, `nombre`, `descripcion`) VALUES (4,'Apendicectomía','Antecedente quirúrgico referido.');
+    INSERT INTO `antecedentes` (`id_antecedente`, `nombre`, `descripcion`) VALUES (5,'Actividad física regular','Hábito de actividad física referido.');
+    INSERT INTO `antecedentes` (`id_antecedente`, `nombre`, `descripcion`) VALUES (6,'Hipertensión arterial familiar','Antecedente familiar referido.');
+    INSERT INTO `antecedentes` (`id_antecedente`, `nombre`, `descripcion`) VALUES (7,'Tratamiento antihipertensivo habitual','Tratamiento farmacológico referido durante conciliación.');
+
+
+    INSERT INTO `consulta_diagnostico` (`id_consulta`, `id_diagnostico`, `tipo`, `observaciones`) VALUES (1,7,'principal','Diagnóstico consignado para seguimiento; requiere interpretación profesional.');
+    INSERT INTO `consulta_diagnostico` (`id_consulta`, `id_diagnostico`, `tipo`, `observaciones`) VALUES (2,2,'principal','Diagnóstico consignado para seguimiento; requiere interpretación profesional.');
+    INSERT INTO `consulta_diagnostico` (`id_consulta`, `id_diagnostico`, `tipo`, `observaciones`) VALUES (3,3,'principal','Diagnóstico consignado para seguimiento; requiere interpretación profesional.');
+    INSERT INTO `consulta_diagnostico` (`id_consulta`, `id_diagnostico`, `tipo`, `observaciones`) VALUES (4,4,'principal','Diagnóstico consignado para seguimiento; requiere interpretación profesional.');
+    INSERT INTO `consulta_diagnostico` (`id_consulta`, `id_diagnostico`, `tipo`, `observaciones`) VALUES (5,8,'principal','Diagnóstico consignado para seguimiento; requiere interpretación profesional.');
+    INSERT INTO `consulta_diagnostico` (`id_consulta`, `id_diagnostico`, `tipo`, `observaciones`) VALUES (6,7,'principal','Diagnóstico consignado para seguimiento; requiere interpretación profesional.');
+    INSERT INTO `consulta_diagnostico` (`id_consulta`, `id_diagnostico`, `tipo`, `observaciones`) VALUES (7,1,'principal','Diagnóstico consignado para seguimiento; requiere interpretación profesional.');
+    INSERT INTO `consulta_diagnostico` (`id_consulta`, `id_diagnostico`, `tipo`, `observaciones`) VALUES (8,5,'principal','Diagnóstico consignado para seguimiento; requiere interpretación profesional.');
+    INSERT INTO `consulta_diagnostico` (`id_consulta`, `id_diagnostico`, `tipo`, `observaciones`) VALUES (9,1,'principal','Diagnóstico consignado para seguimiento; requiere interpretación profesional.');
+    INSERT INTO `consulta_diagnostico` (`id_consulta`, `id_diagnostico`, `tipo`, `observaciones`) VALUES (10,2,'principal','Diagnóstico consignado para seguimiento; requiere interpretación profesional.');
+    INSERT INTO `consulta_diagnostico` (`id_consulta`, `id_diagnostico`, `tipo`, `observaciones`) VALUES (11,1,'principal','Diagnóstico consignado para seguimiento; requiere interpretación profesional.');
+    INSERT INTO `consulta_diagnostico` (`id_consulta`, `id_diagnostico`, `tipo`, `observaciones`) VALUES (12,4,'principal','Diagnóstico consignado para seguimiento; requiere interpretación profesional.');
+    INSERT INTO `consulta_diagnostico` (`id_consulta`, `id_diagnostico`, `tipo`, `observaciones`) VALUES (13,3,'principal','Diagnóstico consignado para seguimiento; requiere interpretación profesional.');
+    INSERT INTO `consulta_diagnostico` (`id_consulta`, `id_diagnostico`, `tipo`, `observaciones`) VALUES (14,5,'principal','Diagnóstico consignado para seguimiento; requiere interpretación profesional.');
+    INSERT INTO `consulta_diagnostico` (`id_consulta`, `id_diagnostico`, `tipo`, `observaciones`) VALUES (15,7,'principal','Diagnóstico consignado para seguimiento; requiere interpretación profesional.');
+    INSERT INTO `consulta_diagnostico` (`id_consulta`, `id_diagnostico`, `tipo`, `observaciones`) VALUES (16,1,'principal','Diagnóstico consignado para seguimiento; requiere interpretación profesional.');
+    INSERT INTO `consulta_diagnostico` (`id_consulta`, `id_diagnostico`, `tipo`, `observaciones`) VALUES (17,2,'principal','Diagnóstico consignado para seguimiento; requiere interpretación profesional.');
+    INSERT INTO `consulta_diagnostico` (`id_consulta`, `id_diagnostico`, `tipo`, `observaciones`) VALUES (18,3,'principal','Diagnóstico consignado para seguimiento; requiere interpretación profesional.');
+    INSERT INTO `consulta_diagnostico` (`id_consulta`, `id_diagnostico`, `tipo`, `observaciones`) VALUES (19,4,'principal','Diagnóstico consignado para seguimiento; requiere interpretación profesional.');
+    INSERT INTO `consulta_diagnostico` (`id_consulta`, `id_diagnostico`, `tipo`, `observaciones`) VALUES (20,8,'principal','Diagnóstico consignado para seguimiento; requiere interpretación profesional.');
+    INSERT INTO `consulta_diagnostico` (`id_consulta`, `id_diagnostico`, `tipo`, `observaciones`) VALUES (21,6,'principal','Diagnóstico consignado para seguimiento; requiere interpretación profesional.');
+    INSERT INTO `consulta_diagnostico` (`id_consulta`, `id_diagnostico`, `tipo`, `observaciones`) VALUES (22,1,'principal','Diagnóstico consignado para seguimiento; requiere interpretación profesional.');
+    INSERT INTO `consulta_diagnostico` (`id_consulta`, `id_diagnostico`, `tipo`, `observaciones`) VALUES (23,5,'principal','Diagnóstico consignado para seguimiento; requiere interpretación profesional.');
+    INSERT INTO `consulta_diagnostico` (`id_consulta`, `id_diagnostico`, `tipo`, `observaciones`) VALUES (24,4,'principal','Diagnóstico consignado para seguimiento; requiere interpretación profesional.');
+
+    INSERT INTO `consultas` (`id_consulta`, `id_historia`, `id_medico`, `fecha_hora`, `tipo_consulta`, `motivo_consulta`, `enfermedad_actual`, `anamnesis`, `revision_sistemas`, `examen_fisico`, `analisis_clinico`, `plan_manejo`, `observaciones`, `estado`, `finalizada_en`, `creado_en`, `actualizado_en`, `motivo_anulacion`, `anulada_en`) VALUES (1,1,1,'2026-01-02 10:00:00','control','cefalea leve episódica','Cefalea bilateral leve tras varias horas de trabajo frente a pantalla.','Sin antecedentes neurológicos relevantes consignados. Sueño algo irregular durante la última semana.','Niega alteraciones visuales persistentes, debilidad y síntomas infecciosos.','Alerta, lenguaje y marcha conservados; examen neurológico general sin hallazgos focales.','Cefalea episódica sin signos de alarma descritos.','Hidratación, pausas visuales y descanso; se explican signos de alarma y control si persiste.','Atención registrada para seguimiento clínico.','finalizada','2026-01-02 10:40:00','2026-11-18 22:01:29','2026-11-18 22:01:29',NULL,NULL);
+    INSERT INTO `consultas` (`id_consulta`, `id_historia`, `id_medico`, `fecha_hora`, `tipo_consulta`, `motivo_consulta`, `enfermedad_actual`, `anamnesis`, `revision_sistemas`, `examen_fisico`, `analisis_clinico`, `plan_manejo`, `observaciones`, `estado`, `finalizada_en`, `creado_en`, `actualizado_en`, `motivo_anulacion`, `anulada_en`) VALUES (2,2,1,'2026-01-05 10:00:00','control','congestión nasal y tos seca','Tres días de rinorrea, congestión y tos ocasional, sin dificultad respiratoria.','Sin antecedentes respiratorios relevantes. No refiere alergias medicamentosas.','Rinorrea y tos; niega disnea, dolor torácico y síntomas gastrointestinales.','Mucosas húmedas, faringe discretamente eritematosa, ventilación pulmonar conservada.','Cuadro compatible con infección respiratoria alta no complicada.','Manejo sintomático e hidratación; se explican signos de alarma y control si hay empeoramiento.','Atención registrada para seguimiento clínico.','finalizada','2026-01-05 10:40:00','2026-11-18 22:01:29','2026-11-18 22:01:29',NULL,NULL);
+    INSERT INTO `consultas` (`id_consulta`, `id_historia`, `id_medico`, `fecha_hora`, `tipo_consulta`, `motivo_consulta`, `enfermedad_actual`, `anamnesis`, `revision_sistemas`, `examen_fisico`, `analisis_clinico`, `plan_manejo`, `observaciones`, `estado`, `finalizada_en`, `creado_en`, `actualizado_en`, `motivo_anulacion`, `anulada_en`) VALUES (3,3,3,'2026-01-08 10:00:00','control','prurito y enrojecimiento en antebrazo','Lesión pruriginosa localizada de cinco días, posterior al uso de un producto cosmético nuevo.','Niega alergias a medicamentos; refiere reacción cutánea previa a fragancias.','Prurito localizado; sin síntomas sistémicos.','Placa eritematosa pequeña en antebrazo, sin secreción ni signos de infección.','Dermatitis localizada posiblemente relacionada con irritante de contacto.','Evitar el producto asociado, cuidado suave de la piel y revisión si progresa o aparecen signos de infección.','Atención registrada para seguimiento clínico.','finalizada','2026-01-08 10:40:00','2026-11-18 22:01:29','2026-11-18 22:01:29',NULL,NULL);
+    INSERT INTO `consultas` (`id_consulta`, `id_historia`, `id_medico`, `fecha_hora`, `tipo_consulta`, `motivo_consulta`, `enfermedad_actual`, `anamnesis`, `revision_sistemas`, `examen_fisico`, `analisis_clinico`, `plan_manejo`, `observaciones`, `estado`, `finalizada_en`, `creado_en`, `actualizado_en`, `motivo_anulacion`, `anulada_en`) VALUES (4,4,4,'2026-01-11 10:00:00','control','seguimiento de presión arterial','Consulta de control; refiere cumplimiento del plan previamente establecido y no presenta síntomas agudos.','Antecedente personal de hipertensión. Refiere adherencia y seguimiento periódico.','Niega cefalea intensa, alteraciones visuales, disnea y dolor torácico.','Alerta, sin dificultad respiratoria; cifras tensionales elevadas en la medición actual.','Hipertensión en seguimiento; requiere valoración integral de tendencia y riesgo cardiovascular.','Revisar registros domiciliarios, mantener seguimiento con su profesional tratante y solicitar laboratorios de control.','Atención registrada para seguimiento clínico.','finalizada','2026-01-11 10:40:00','2026-11-18 22:01:29','2026-11-18 22:01:29',NULL,NULL);
+    INSERT INTO `consultas` (`id_consulta`, `id_historia`, `id_medico`, `fecha_hora`, `tipo_consulta`, `motivo_consulta`, `enfermedad_actual`, `anamnesis`, `revision_sistemas`, `examen_fisico`, `analisis_clinico`, `plan_manejo`, `observaciones`, `estado`, `finalizada_en`, `creado_en`, `actualizado_en`, `motivo_anulacion`, `anulada_en`) VALUES (5,5,2,'2026-01-14 10:00:00','control','dolor de garganta','Dos días de odinofagia leve, congestión nasal y tos ocasional.','Sin antecedentes de importancia consignados.','Odinofagia leve; niega disnea, dolor torácico y exantema.','Hidratación adecuada; faringe eritematosa sin exudado visible; respiración tranquila.','Cuadro faríngeo agudo sin signos de complicación en la valoración.','Hidratación, observación y educación sobre signos de alarma; reevaluación si persiste o empeora.','Atención registrada para seguimiento clínico.','finalizada','2026-01-14 10:40:00','2026-11-18 22:01:29','2026-11-18 22:01:29',NULL,NULL);
+    INSERT INTO `consultas` (`id_consulta`, `id_historia`, `id_medico`, `fecha_hora`, `tipo_consulta`, `motivo_consulta`, `enfermedad_actual`, `anamnesis`, `revision_sistemas`, `examen_fisico`, `analisis_clinico`, `plan_manejo`, `observaciones`, `estado`, `finalizada_en`, `creado_en`, `actualizado_en`, `motivo_anulacion`, `anulada_en`) VALUES (6,6,4,'2026-01-17 10:00:00','control','dolor lumbar mecánico','Molestia lumbar intermitente tras actividad física, sin irradiación ni limitación importante.','Sin antecedentes quirúrgicos de columna ni síntomas similares persistentes.','Niega debilidad, alteración sensitiva, fiebre y cambios esfinterianos.','Marcha conservada; movilidad lumbar levemente molesta, sin déficit neurológico evidente.','Dolor lumbar mecánico sin signos de alarma descritos.','Actividad gradual según tolerancia, higiene postural y control; consultar de inmediato ante signos neurológicos o empeoramiento.','Atención registrada para seguimiento clínico.','finalizada','2026-01-17 10:40:00','2026-11-18 22:01:29','2026-11-18 22:01:29',NULL,NULL);
+    INSERT INTO `consultas` (`id_consulta`, `id_historia`, `id_medico`, `fecha_hora`, `tipo_consulta`, `motivo_consulta`, `enfermedad_actual`, `anamnesis`, `revision_sistemas`, `examen_fisico`, `analisis_clinico`, `plan_manejo`, `observaciones`, `estado`, `finalizada_en`, `creado_en`, `actualizado_en`, `motivo_anulacion`, `anulada_en`) VALUES (7,7,5,'2026-01-20 10:00:00','control','control preventivo','Consulta preventiva, sin síntomas ginecológicos agudos.','Antecedentes ginecológicos revisados en entrevista; sin alergias conocidas.','Niega fiebre, dolor pélvico y síntomas urinarios.','Buen estado general; valoración física general sin hallazgos agudos.','Control preventivo sin síntomas de alarma en esta consulta.','Actualizar tamizajes conforme a edad y antecedentes durante consulta profesional.','Atención registrada para seguimiento clínico.','finalizada','2026-01-20 10:40:00','2026-11-18 22:01:29','2026-11-18 22:01:29',NULL,NULL);
+    INSERT INTO `consultas` (`id_consulta`, `id_historia`, `id_medico`, `fecha_hora`, `tipo_consulta`, `motivo_consulta`, `enfermedad_actual`, `anamnesis`, `revision_sistemas`, `examen_fisico`, `analisis_clinico`, `plan_manejo`, `observaciones`, `estado`, `finalizada_en`, `creado_en`, `actualizado_en`, `motivo_anulacion`, `anulada_en`) VALUES (8,8,1,'2026-01-23 10:00:00','control','ardor retroesternal ocasional','Refiere ardor epigástrico y retroesternal ocasional posterior a comidas abundantes.','Niega uso frecuente de antiinflamatorios y alergias medicamentosas conocidas.','Síntomas digestivos posprandiales; niega dolor abdominal intenso.','Abdomen blando, no doloroso, sin signos de irritación peritoneal.','Síntomas compatibles con reflujo; sin signos de alarma descritos.','Revisar hábitos alimentarios y seguimiento clínico; consultar si aparecen signos de alarma.','Atención registrada para seguimiento clínico.','finalizada','2026-01-23 10:40:00','2026-11-18 22:01:29','2026-11-18 22:01:29',NULL,NULL);
+    INSERT INTO `consultas` (`id_consulta`, `id_historia`, `id_medico`, `fecha_hora`, `tipo_consulta`, `motivo_consulta`, `enfermedad_actual`, `anamnesis`, `revision_sistemas`, `examen_fisico`, `analisis_clinico`, `plan_manejo`, `observaciones`, `estado`, `finalizada_en`, `creado_en`, `actualizado_en`, `motivo_anulacion`, `anulada_en`) VALUES (9,9,4,'2026-02-02 10:00:00','control','control de riesgo cardiovascular','Acude a seguimiento de factores de riesgo; se encuentra sin síntomas cardiovasculares agudos.','Antecedente familiar de hipertensión en madre.','Revisión cardiovascular sin síntomas de alarma referidos.','Ritmo regular a la auscultación; sin edema periférico.','Control preventivo de riesgo cardiovascular.','Se solicita perfil lipídico para revisión en control clínico y se refuerzan hábitos saludables.','Atención registrada para seguimiento clínico.','finalizada','2026-02-02 10:40:00','2026-11-18 22:01:29','2026-11-18 22:01:29',NULL,NULL);
+    INSERT INTO `consultas` (`id_consulta`, `id_historia`, `id_medico`, `fecha_hora`, `tipo_consulta`, `motivo_consulta`, `enfermedad_actual`, `anamnesis`, `revision_sistemas`, `examen_fisico`, `analisis_clinico`, `plan_manejo`, `observaciones`, `estado`, `finalizada_en`, `creado_en`, `actualizado_en`, `motivo_anulacion`, `anulada_en`) VALUES (10,10,2,'2026-02-05 10:00:00','control','síntomas respiratorios leves','Congestión nasal y malestar de dos días, sin dificultad respiratoria.','Antecedentes pediátricos sin enfermedades crónicas referidas por acompañante.','Niega sibilancias, disnea y dolor torácico.','Buen estado general, hidratación conservada, auscultación pulmonar sin ruidos agregados.','Cuadro respiratorio alto leve, sin signos de dificultad respiratoria.','Cuidados generales e hidratación; adulto responsable recibe orientación de signos de alarma.','Atención registrada para seguimiento clínico.','finalizada','2026-02-05 10:40:00','2026-11-18 22:01:29','2026-11-18 22:01:29',NULL,NULL);
+    INSERT INTO `consultas` (`id_consulta`, `id_historia`, `id_medico`, `fecha_hora`, `tipo_consulta`, `motivo_consulta`, `enfermedad_actual`, `anamnesis`, `revision_sistemas`, `examen_fisico`, `analisis_clinico`, `plan_manejo`, `observaciones`, `estado`, `finalizada_en`, `creado_en`, `actualizado_en`, `motivo_anulacion`, `anulada_en`) VALUES (11,11,5,'2026-02-08 10:00:00','control','valoración de seguimiento','Consulta de seguimiento preventivo, sin molestias actuales.','Antecedentes revisados y conciliados durante la consulta.','Revisión por sistemas sin síntomas agudos relevantes.','Examen general sin hallazgos agudos relevantes.','Seguimiento preventivo.','Continuar controles periódicos y actualizar tamizajes según antecedentes.','Atención registrada para seguimiento clínico.','finalizada','2026-02-08 10:40:00','2026-11-18 22:01:29','2026-11-18 22:01:29',NULL,NULL);
+    INSERT INTO `consultas` (`id_consulta`, `id_historia`, `id_medico`, `fecha_hora`, `tipo_consulta`, `motivo_consulta`, `enfermedad_actual`, `anamnesis`, `revision_sistemas`, `examen_fisico`, `analisis_clinico`, `plan_manejo`, `observaciones`, `estado`, `finalizada_en`, `creado_en`, `actualizado_en`, `motivo_anulacion`, `anulada_en`) VALUES (12,12,6,'2026-02-11 10:00:00','control','seguimiento de presión arterial','Control de hipertensión; refiere mediciones domiciliarias dentro del rango acordado con su profesional.','Hipertensión y dislipidemia en seguimiento; tratamiento habitual referido por el paciente.','Niega síntomas neurológicos o cardiovasculares agudos.','Alerta, sin dificultad respiratoria; presión arterial en rango limítrofe durante la visita.','Seguimiento de hipertensión, sin síntomas de descompensación aguda.','Continuar control con equipo tratante y revisar resultados de laboratorio en próxima cita.','Atención registrada para seguimiento clínico.','finalizada','2026-02-11 10:40:00','2026-11-18 22:01:29','2026-11-18 22:01:29',NULL,NULL);
+    INSERT INTO `consultas` (`id_consulta`, `id_historia`, `id_medico`, `fecha_hora`, `tipo_consulta`, `motivo_consulta`, `enfermedad_actual`, `anamnesis`, `revision_sistemas`, `examen_fisico`, `analisis_clinico`, `plan_manejo`, `observaciones`, `estado`, `finalizada_en`, `creado_en`, `actualizado_en`, `motivo_anulacion`, `anulada_en`) VALUES (13,13,3,'2026-02-14 10:00:00','control','irritación cutánea localizada','Enrojecimiento leve en manos después de labores domésticas, sin lesiones abiertas.','Refiere sensibilidad cutánea a fragancias.','Niega síntomas generales y lesiones en mucosas.','Piel seca con eritema superficial localizado, sin secreción.','Irritación cutánea posiblemente asociada a exposición de contacto.','Reducir exposición al irritante, usar medidas de protección y volver si aparecen lesiones extensas o signos de infección.','Atención registrada para seguimiento clínico.','finalizada','2026-02-14 10:40:00','2026-11-18 22:01:29','2026-11-18 22:01:29',NULL,NULL);
+    INSERT INTO `consultas` (`id_consulta`, `id_historia`, `id_medico`, `fecha_hora`, `tipo_consulta`, `motivo_consulta`, `enfermedad_actual`, `anamnesis`, `revision_sistemas`, `examen_fisico`, `analisis_clinico`, `plan_manejo`, `observaciones`, `estado`, `finalizada_en`, `creado_en`, `actualizado_en`, `motivo_anulacion`, `anulada_en`) VALUES (14,14,4,'2026-02-17 10:00:00','control','dispepsia ocasional','Molestia epigástrica leve y ocasional después de comidas copiosas.','Sin antecedentes digestivos de alarma conocidos.','Niega dolor intenso y cambios persistentes del hábito intestinal.','Abdomen blando, no doloroso, sin masas palpables.','Dispepsia leve sin signos de alarma descritos.','Revisar hábitos y evolución; seguimiento profesional si los síntomas persisten.','Atención registrada para seguimiento clínico.','finalizada','2026-02-17 10:40:00','2026-11-18 22:01:29','2026-11-18 22:01:29',NULL,NULL);
+    INSERT INTO `consultas` (`id_consulta`, `id_historia`, `id_medico`, `fecha_hora`, `tipo_consulta`, `motivo_consulta`, `enfermedad_actual`, `anamnesis`, `revision_sistemas`, `examen_fisico`, `analisis_clinico`, `plan_manejo`, `observaciones`, `estado`, `finalizada_en`, `creado_en`, `actualizado_en`, `motivo_anulacion`, `anulada_en`) VALUES (15,15,1,'2026-02-20 10:00:00','control','cefalea episódica','Cefalea bilateral leve posterior a jornadas prolongadas frente a pantalla.','Sin antecedentes neurológicos relevantes consignados.','Niega alteración visual persistente, debilidad y fiebre.','Alerta, lenguaje y marcha conservados; examen neurológico general sin hallazgos focales.','Cefalea episódica sin signos de alarma descritos.','Higiene del sueño, pausas visuales e hidratación; consultar ante aparición de signos de alarma.','Atención registrada para seguimiento clínico.','finalizada','2026-02-20 10:40:00','2026-11-18 22:01:29','2026-11-18 22:01:29',NULL,NULL);
+    INSERT INTO `consultas` (`id_consulta`, `id_historia`, `id_medico`, `fecha_hora`, `tipo_consulta`, `motivo_consulta`, `enfermedad_actual`, `anamnesis`, `revision_sistemas`, `examen_fisico`, `analisis_clinico`, `plan_manejo`, `observaciones`, `estado`, `finalizada_en`, `creado_en`, `actualizado_en`, `motivo_anulacion`, `anulada_en`) VALUES (16,1,1,'2026-02-23 10:00:00','control','seguimiento preventivo','Seguimiento de hábitos de salud, sin síntomas nuevos.','Sin cambios relevantes en antecedentes desde el control previo.','Revisión por sistemas sin síntomas agudos.','Buen estado general, sin hallazgos agudos.','Seguimiento preventivo.','Continuar controles periódicos y medidas preventivas acordadas.','Atención registrada para seguimiento clínico.','finalizada','2026-02-23 10:40:00','2026-11-18 22:01:29','2026-11-18 22:01:29',NULL,NULL);
+    INSERT INTO `consultas` (`id_consulta`, `id_historia`, `id_medico`, `fecha_hora`, `tipo_consulta`, `motivo_consulta`, `enfermedad_actual`, `anamnesis`, `revision_sistemas`, `examen_fisico`, `analisis_clinico`, `plan_manejo`, `observaciones`, `estado`, `finalizada_en`, `creado_en`, `actualizado_en`, `motivo_anulacion`, `anulada_en`) VALUES (17,2,1,'2026-03-02 10:00:00','control','control de síntomas respiratorios','Revisión tras cuadro respiratorio reciente; tos en mejoría y sin fiebre.','Sin cambios en antecedentes.','Niega dificultad respiratoria y dolor torácico.','Ventilación bilateral conservada, sin signos de dificultad respiratoria.','Evolución favorable de infección respiratoria alta.','Continuar medidas de soporte y consultar si hay recaída o dificultad respiratoria.','Atención registrada para seguimiento clínico.','finalizada','2026-03-02 10:40:00','2026-11-18 22:01:29','2026-11-18 22:01:29',NULL,NULL);
+    INSERT INTO `consultas` (`id_consulta`, `id_historia`, `id_medico`, `fecha_hora`, `tipo_consulta`, `motivo_consulta`, `enfermedad_actual`, `anamnesis`, `revision_sistemas`, `examen_fisico`, `analisis_clinico`, `plan_manejo`, `observaciones`, `estado`, `finalizada_en`, `creado_en`, `actualizado_en`, `motivo_anulacion`, `anulada_en`) VALUES (18,3,3,'2026-03-05 10:00:00','control','seguimiento dermatológico','Control de irritación cutánea; refiere mejoría al suspender exposición a fragancias.','Antecedente de sensibilidad cutánea a fragancias.','Niega fiebre, dolor y lesiones en mucosas.','Lesión previa en resolución, sin signos de infección.','Dermatitis localizada en mejoría.','Mantener cuidado suave de la piel y evitar irritante identificado.','Atención registrada para seguimiento clínico.','finalizada','2026-03-05 10:40:00','2026-11-18 22:01:29','2026-11-18 22:01:29',NULL,NULL);
+    INSERT INTO `consultas` (`id_consulta`, `id_historia`, `id_medico`, `fecha_hora`, `tipo_consulta`, `motivo_consulta`, `enfermedad_actual`, `anamnesis`, `revision_sistemas`, `examen_fisico`, `analisis_clinico`, `plan_manejo`, `observaciones`, `estado`, `finalizada_en`, `creado_en`, `actualizado_en`, `motivo_anulacion`, `anulada_en`) VALUES (19,4,4,'2026-03-08 10:00:00','control','control de presión arterial','Seguimiento de presión arterial con revisión de registros domiciliarios.','Hipertensión en seguimiento.','Niega dolor torácico, disnea y síntomas neurológicos.','Sin dificultad respiratoria ni edema; revisión de cifras tensionales.','Control evolutivo de hipertensión.','Continuar plan indicado por su profesional tratante y control periódico.','Atención registrada para seguimiento clínico.','finalizada','2026-03-08 10:40:00','2026-11-18 22:01:29','2026-11-18 22:01:29',NULL,NULL);
+    INSERT INTO `consultas` (`id_consulta`, `id_historia`, `id_medico`, `fecha_hora`, `tipo_consulta`, `motivo_consulta`, `enfermedad_actual`, `anamnesis`, `revision_sistemas`, `examen_fisico`, `analisis_clinico`, `plan_manejo`, `observaciones`, `estado`, `finalizada_en`, `creado_en`, `actualizado_en`, `motivo_anulacion`, `anulada_en`) VALUES (20,5,2,'2026-03-11 10:00:00','control','revisión de odinofagia','Revisión por síntomas faríngeos en mejoría, sin dificultad para deglutir.','Sin antecedentes de importancia nuevos.','Niega disnea y empeoramiento del dolor.','Buen estado general; mucosas húmedas.','Evolución favorable del cuadro faríngeo.','Continuar hidratación y consultar si reaparece fiebre persistente o dificultad respiratoria.','Atención registrada para seguimiento clínico.','finalizada','2026-03-11 10:40:00','2026-11-18 22:01:29','2026-11-18 22:01:29',NULL,NULL);
+    INSERT INTO `consultas` (`id_consulta`, `id_historia`, `id_medico`, `fecha_hora`, `tipo_consulta`, `motivo_consulta`, `enfermedad_actual`, `anamnesis`, `revision_sistemas`, `examen_fisico`, `analisis_clinico`, `plan_manejo`, `observaciones`, `estado`, `finalizada_en`, `creado_en`, `actualizado_en`, `motivo_anulacion`, `anulada_en`) VALUES (21,6,4,'2026-03-14 10:00:00','control','seguimiento de dolor lumbar','Control de dolor lumbar con mejoría gradual y retorno progresivo a actividades.','Sin cambios en antecedentes.','Niega fiebre y síntomas neurológicos.','Marcha estable, movilidad funcional conservada.','Dolor lumbar en mejoría, sin signos de alarma referidos.','Progresar actividad según tolerancia y mantener vigilancia de signos de alarma.','Atención registrada para seguimiento clínico.','finalizada','2026-03-14 10:40:00','2026-11-18 22:01:29','2026-11-18 22:01:29',NULL,NULL);
+    INSERT INTO `consultas` (`id_consulta`, `id_historia`, `id_medico`, `fecha_hora`, `tipo_consulta`, `motivo_consulta`, `enfermedad_actual`, `anamnesis`, `revision_sistemas`, `examen_fisico`, `analisis_clinico`, `plan_manejo`, `observaciones`, `estado`, `finalizada_en`, `creado_en`, `actualizado_en`, `motivo_anulacion`, `anulada_en`) VALUES (22,7,5,'2026-03-17 10:00:00','control','control preventivo','Seguimiento de salud preventiva, sin molestias agudas.','Antecedentes ginecológicos actualizados durante entrevista.','Niega dolor pélvico y sangrado anormal.','Buen estado general, sin hallazgos agudos.','Seguimiento preventivo.','Continuar cronograma de controles según edad y antecedentes.','Atención registrada para seguimiento clínico.','finalizada','2026-03-17 10:40:00','2026-11-18 22:01:29','2026-11-18 22:01:29',NULL,NULL);
+    INSERT INTO `consultas` (`id_consulta`, `id_historia`, `id_medico`, `fecha_hora`, `tipo_consulta`, `motivo_consulta`, `enfermedad_actual`, `anamnesis`, `revision_sistemas`, `examen_fisico`, `analisis_clinico`, `plan_manejo`, `observaciones`, `estado`, `finalizada_en`, `creado_en`, `actualizado_en`, `motivo_anulacion`, `anulada_en`) VALUES (23,8,1,'2026-03-20 10:00:00','control','seguimiento digestivo','Revisión de ardor retroesternal ocasional; refiere menor frecuencia tras ajustes de hábitos.','Sin cambios en antecedentes.','Síntomas digestivos en mejoría, sin signos de alarma.','Abdomen blando, no doloroso.','Síntomas de reflujo en mejoría.','Mantener medidas generales y control si reaparecen o progresan síntomas.','Atención registrada para seguimiento clínico.','finalizada','2026-03-20 10:40:00','2026-11-18 22:01:29','2026-11-18 22:01:29',NULL,NULL);
+    INSERT INTO `consultas` (`id_consulta`, `id_historia`, `id_medico`, `fecha_hora`, `tipo_consulta`, `motivo_consulta`, `enfermedad_actual`, `anamnesis`, `revision_sistemas`, `examen_fisico`, `analisis_clinico`, `plan_manejo`, `observaciones`, `estado`, `finalizada_en`, `creado_en`, `actualizado_en`, `motivo_anulacion`, `anulada_en`) VALUES (24,9,6,'2026-03-23 10:00:00','control','revisión de perfil lipídico','Consulta para revisar resultados de laboratorio y riesgo cardiovascular.','Antecedente familiar de hipertensión.','Niega disnea, dolor torácico y edema.','Buen estado general, sin hallazgos agudos.','Revisión de riesgo cardiovascular y resultados de laboratorio.','Interpretar resultados en contexto clínico y mantener control periódico.','Atención registrada para seguimiento clínico.','finalizada','2026-03-23 10:40:00','2026-11-18 22:01:29','2026-11-18 22:01:29',NULL,NULL);
+
+
+    INSERT INTO `demo_seed_registry` (`seed_key`, `entity`, `record_id`, `created_at`) VALUES ('consultation-01','consultas',1,'2026-11-18 22:01:29');
+    INSERT INTO `demo_seed_registry` (`seed_key`, `entity`, `record_id`, `created_at`) VALUES ('consultation-02','consultas',2,'2026-11-18 22:01:29');
+    INSERT INTO `demo_seed_registry` (`seed_key`, `entity`, `record_id`, `created_at`) VALUES ('consultation-03','consultas',3,'2026-11-18 22:01:29');
+    INSERT INTO `demo_seed_registry` (`seed_key`, `entity`, `record_id`, `created_at`) VALUES ('consultation-04','consultas',4,'2026-11-18 22:01:29');
+    INSERT INTO `demo_seed_registry` (`seed_key`, `entity`, `record_id`, `created_at`) VALUES ('consultation-05','consultas',5,'2026-11-18 22:01:29');
+    INSERT INTO `demo_seed_registry` (`seed_key`, `entity`, `record_id`, `created_at`) VALUES ('consultation-06','consultas',6,'2026-11-18 22:01:29');
+    INSERT INTO `demo_seed_registry` (`seed_key`, `entity`, `record_id`, `created_at`) VALUES ('consultation-07','consultas',7,'2026-11-18 22:01:29');
+    INSERT INTO `demo_seed_registry` (`seed_key`, `entity`, `record_id`, `created_at`) VALUES ('consultation-08','consultas',8,'2026-11-18 22:01:29');
+    INSERT INTO `demo_seed_registry` (`seed_key`, `entity`, `record_id`, `created_at`) VALUES ('consultation-09','consultas',9,'2026-11-18 22:01:29');
+    INSERT INTO `demo_seed_registry` (`seed_key`, `entity`, `record_id`, `created_at`) VALUES ('consultation-10','consultas',10,'2026-11-18 22:01:29');
+    INSERT INTO `demo_seed_registry` (`seed_key`, `entity`, `record_id`, `created_at`) VALUES ('consultation-11','consultas',11,'2026-11-18 22:01:29');
+    INSERT INTO `demo_seed_registry` (`seed_key`, `entity`, `record_id`, `created_at`) VALUES ('consultation-12','consultas',12,'2026-11-18 22:01:29');
+    INSERT INTO `demo_seed_registry` (`seed_key`, `entity`, `record_id`, `created_at`) VALUES ('consultation-13','consultas',13,'2026-11-18 22:01:29');
+    INSERT INTO `demo_seed_registry` (`seed_key`, `entity`, `record_id`, `created_at`) VALUES ('consultation-14','consultas',14,'2026-11-18 22:01:29');
+    INSERT INTO `demo_seed_registry` (`seed_key`, `entity`, `record_id`, `created_at`) VALUES ('consultation-15','consultas',15,'2026-11-18 22:01:29');
+    INSERT INTO `demo_seed_registry` (`seed_key`, `entity`, `record_id`, `created_at`) VALUES ('consultation-16','consultas',16,'2026-11-18 22:01:29');
+    INSERT INTO `demo_seed_registry` (`seed_key`, `entity`, `record_id`, `created_at`) VALUES ('consultation-17','consultas',17,'2026-11-18 22:01:29');
+    INSERT INTO `demo_seed_registry` (`seed_key`, `entity`, `record_id`, `created_at`) VALUES ('consultation-18','consultas',18,'2026-11-18 22:01:29');
+    INSERT INTO `demo_seed_registry` (`seed_key`, `entity`, `record_id`, `created_at`) VALUES ('consultation-19','consultas',19,'2026-11-18 22:01:29');
+    INSERT INTO `demo_seed_registry` (`seed_key`, `entity`, `record_id`, `created_at`) VALUES ('consultation-20','consultas',20,'2026-11-18 22:01:29');
+    INSERT INTO `demo_seed_registry` (`seed_key`, `entity`, `record_id`, `created_at`) VALUES ('consultation-21','consultas',21,'2026-11-18 22:01:29');
+    INSERT INTO `demo_seed_registry` (`seed_key`, `entity`, `record_id`, `created_at`) VALUES ('consultation-22','consultas',22,'2026-11-18 22:01:29');
+    INSERT INTO `demo_seed_registry` (`seed_key`, `entity`, `record_id`, `created_at`) VALUES ('consultation-23','consultas',23,'2026-11-18 22:01:29');
+    INSERT INTO `demo_seed_registry` (`seed_key`, `entity`, `record_id`, `created_at`) VALUES ('consultation-24','consultas',24,'2026-11-18 22:01:29');
+    INSERT INTO `demo_seed_registry` (`seed_key`, `entity`, `record_id`, `created_at`) VALUES ('doctor-1','medicos',1,'2026-11-18 22:01:26');
+    INSERT INTO `demo_seed_registry` (`seed_key`, `entity`, `record_id`, `created_at`) VALUES ('doctor-2','medicos',2,'2026-11-18 22:01:26');
+    INSERT INTO `demo_seed_registry` (`seed_key`, `entity`, `record_id`, `created_at`) VALUES ('doctor-3','medicos',3,'2026-11-18 22:01:27');
+    INSERT INTO `demo_seed_registry` (`seed_key`, `entity`, `record_id`, `created_at`) VALUES ('doctor-4','medicos',4,'2026-11-18 22:01:28');
+    INSERT INTO `demo_seed_registry` (`seed_key`, `entity`, `record_id`, `created_at`) VALUES ('doctor-5','medicos',5,'2026-11-18 22:01:28');
+    INSERT INTO `demo_seed_registry` (`seed_key`, `entity`, `record_id`, `created_at`) VALUES ('doctor-6','medicos',6,'2026-11-18 22:01:29');
+    INSERT INTO `demo_seed_registry` (`seed_key`, `entity`, `record_id`, `created_at`) VALUES ('history-1','historias_clinicas',1,'2026-11-18 22:01:29');
+    INSERT INTO `demo_seed_registry` (`seed_key`, `entity`, `record_id`, `created_at`) VALUES ('history-10','historias_clinicas',10,'2026-11-18 22:01:29');
+    INSERT INTO `demo_seed_registry` (`seed_key`, `entity`, `record_id`, `created_at`) VALUES ('history-11','historias_clinicas',11,'2026-11-18 22:01:29');
+    INSERT INTO `demo_seed_registry` (`seed_key`, `entity`, `record_id`, `created_at`) VALUES ('history-12','historias_clinicas',12,'2026-11-18 22:01:29');
+    INSERT INTO `demo_seed_registry` (`seed_key`, `entity`, `record_id`, `created_at`) VALUES ('history-13','historias_clinicas',13,'2026-11-18 22:01:29');
+    INSERT INTO `demo_seed_registry` (`seed_key`, `entity`, `record_id`, `created_at`) VALUES ('history-14','historias_clinicas',14,'2026-11-18 22:01:29');
+    INSERT INTO `demo_seed_registry` (`seed_key`, `entity`, `record_id`, `created_at`) VALUES ('history-15','historias_clinicas',15,'2026-11-18 22:01:29');
+    INSERT INTO `demo_seed_registry` (`seed_key`, `entity`, `record_id`, `created_at`) VALUES ('history-2','historias_clinicas',2,'2026-11-18 22:01:29');
+    INSERT INTO `demo_seed_registry` (`seed_key`, `entity`, `record_id`, `created_at`) VALUES ('history-3','historias_clinicas',3,'2026-11-18 22:01:29');
+    INSERT INTO `demo_seed_registry` (`seed_key`, `entity`, `record_id`, `created_at`) VALUES ('history-4','historias_clinicas',4,'2026-11-18 22:01:29');
+    INSERT INTO `demo_seed_registry` (`seed_key`, `entity`, `record_id`, `created_at`) VALUES ('history-5','historias_clinicas',5,'2026-11-18 22:01:29');
+    INSERT INTO `demo_seed_registry` (`seed_key`, `entity`, `record_id`, `created_at`) VALUES ('history-6','historias_clinicas',6,'2026-11-18 22:01:29');
+    INSERT INTO `demo_seed_registry` (`seed_key`, `entity`, `record_id`, `created_at`) VALUES ('history-7','historias_clinicas',7,'2026-11-18 22:01:29');
+    INSERT INTO `demo_seed_registry` (`seed_key`, `entity`, `record_id`, `created_at`) VALUES ('history-8','historias_clinicas',8,'2026-11-18 22:01:29');
+    INSERT INTO `demo_seed_registry` (`seed_key`, `entity`, `record_id`, `created_at`) VALUES ('history-9','historias_clinicas',9,'2026-11-18 22:01:29');
+    INSERT INTO `demo_seed_registry` (`seed_key`, `entity`, `record_id`, `created_at`) VALUES ('patient-1','pacientes',1,'2026-11-18 22:01:29');
+    INSERT INTO `demo_seed_registry` (`seed_key`, `entity`, `record_id`, `created_at`) VALUES ('patient-10','pacientes',10,'2026-11-18 22:01:29');
+    INSERT INTO `demo_seed_registry` (`seed_key`, `entity`, `record_id`, `created_at`) VALUES ('patient-11','pacientes',11,'2026-11-18 22:01:29');
+    INSERT INTO `demo_seed_registry` (`seed_key`, `entity`, `record_id`, `created_at`) VALUES ('patient-12','pacientes',12,'2026-11-18 22:01:29');
+    INSERT INTO `demo_seed_registry` (`seed_key`, `entity`, `record_id`, `created_at`) VALUES ('patient-13','pacientes',13,'2026-11-18 22:01:29');
+    INSERT INTO `demo_seed_registry` (`seed_key`, `entity`, `record_id`, `created_at`) VALUES ('patient-14','pacientes',14,'2026-11-18 22:01:29');
+    INSERT INTO `demo_seed_registry` (`seed_key`, `entity`, `record_id`, `created_at`) VALUES ('patient-15','pacientes',15,'2026-11-18 22:01:29');
+    INSERT INTO `demo_seed_registry` (`seed_key`, `entity`, `record_id`, `created_at`) VALUES ('patient-2','pacientes',2,'2026-11-18 22:01:29');
+    INSERT INTO `demo_seed_registry` (`seed_key`, `entity`, `record_id`, `created_at`) VALUES ('patient-3','pacientes',3,'2026-11-18 22:01:29');
+    INSERT INTO `demo_seed_registry` (`seed_key`, `entity`, `record_id`, `created_at`) VALUES ('patient-4','pacientes',4,'2026-11-18 22:01:29');
+    INSERT INTO `demo_seed_registry` (`seed_key`, `entity`, `record_id`, `created_at`) VALUES ('patient-5','pacientes',5,'2026-11-18 22:01:29');
+    INSERT INTO `demo_seed_registry` (`seed_key`, `entity`, `record_id`, `created_at`) VALUES ('patient-6','pacientes',6,'2026-11-18 22:01:29');
+    INSERT INTO `demo_seed_registry` (`seed_key`, `entity`, `record_id`, `created_at`) VALUES ('patient-7','pacientes',7,'2026-11-18 22:01:29');
+    INSERT INTO `demo_seed_registry` (`seed_key`, `entity`, `record_id`, `created_at`) VALUES ('patient-8','pacientes',8,'2026-11-18 22:01:29');
+    INSERT INTO `demo_seed_registry` (`seed_key`, `entity`, `record_id`, `created_at`) VALUES ('patient-9','pacientes',9,'2026-11-18 22:01:29');
+
+    INSERT INTO `diagnosticos` (`id_diagnostico`, `codigo_cie10`, `nombre`, `descripcion`) VALUES (1,'Z108','Otros exámenes generales de personas sin quejas o diagnóstico informado','Control general de salud.');
+    INSERT INTO `diagnosticos` (`id_diagnostico`, `codigo_cie10`, `nombre`, `descripcion`) VALUES (2,'J069','Infección aguda de las vías respiratorias superiores, no especificada','Cuadro respiratorio agudo no complicado.');
+    INSERT INTO `diagnosticos` (`id_diagnostico`, `codigo_cie10`, `nombre`, `descripcion`) VALUES (3,'L309','Dermatitis, no especificada','Dermatitis de evolución reciente.');
+    INSERT INTO `diagnosticos` (`id_diagnostico`, `codigo_cie10`, `nombre`, `descripcion`) VALUES (4,'I10','Hipertensión esencial (primaria)','Elevación crónica de la presión arterial.');
+    INSERT INTO `diagnosticos` (`id_diagnostico`, `codigo_cie10`, `nombre`, `descripcion`) VALUES (5,'K219','Enfermedad del reflujo gastroesofágico sin esofagitis','Síntomas compatibles con reflujo gastroesofágico.');
+    INSERT INTO `diagnosticos` (`id_diagnostico`, `codigo_cie10`, `nombre`, `descripcion`) VALUES (6,'M545','Lumbago no especificado','Dolor lumbar sin signos de alarma descritos.');
+    INSERT INTO `diagnosticos` (`id_diagnostico`, `codigo_cie10`, `nombre`, `descripcion`) VALUES (7,'R51X','Cefalea','Cefalea sin signos de alarma descritos.');
+    INSERT INTO `diagnosticos` (`id_diagnostico`, `codigo_cie10`, `nombre`, `descripcion`) VALUES (8,'J039','Amigdalitis aguda, no especificada','Odinofagia y hallazgos faríngeos agudos.');
+
+    INSERT INTO `especialidades` (`id_especialidad`, `nombre`, `descripcion`) VALUES (1,'Medicina general','Atención profesional en medicina general.');
+    INSERT INTO `especialidades` (`id_especialidad`, `nombre`, `descripcion`) VALUES (2,'Medicina interna','Atención profesional en medicina interna.');
+    INSERT INTO `especialidades` (`id_especialidad`, `nombre`, `descripcion`) VALUES (3,'Pediatría','Atención profesional en pediatría.');
+    INSERT INTO `especialidades` (`id_especialidad`, `nombre`, `descripcion`) VALUES (4,'Ginecología','Atención profesional en ginecología.');
+    INSERT INTO `especialidades` (`id_especialidad`, `nombre`, `descripcion`) VALUES (5,'Cardiología','Atención profesional en cardiología.');
+    INSERT INTO `especialidades` (`id_especialidad`, `nombre`, `descripcion`) VALUES (6,'Dermatología','Atención profesional en dermatología.');
+
+    INSERT INTO `examenes` (`id_examen`, `nombre`, `descripcion`, `codigo_catalogo`) VALUES (1,'Hemograma completo','Recuento celular y parámetros hematológicos.','DEMO-LAB-01');
+    INSERT INTO `examenes` (`id_examen`, `nombre`, `descripcion`, `codigo_catalogo`) VALUES (2,'Perfil lipídico','Colesterol total, HDL, LDL y triglicéridos.','DEMO-LAB-02');
+    INSERT INTO `examenes` (`id_examen`, `nombre`, `descripcion`, `codigo_catalogo`) VALUES (3,'Examen general de orina','Análisis físico-químico y microscópico de orina.','DEMO-LAB-03');
+
+    INSERT INTO `historia_medico` (`id_asignacion`, `id_historia`, `id_medico`, `asignado_por`, `asignado_en`, `estado`) VALUES (1,1,1,1,'2026-11-18 22:01:29','activa');
+    INSERT INTO `historia_medico` (`id_asignacion`, `id_historia`, `id_medico`, `asignado_por`, `asignado_en`, `estado`) VALUES (2,2,1,1,'2026-11-18 22:01:29','activa');
+    INSERT INTO `historia_medico` (`id_asignacion`, `id_historia`, `id_medico`, `asignado_por`, `asignado_en`, `estado`) VALUES (3,3,3,1,'2026-11-18 22:01:29','activa');
+    INSERT INTO `historia_medico` (`id_asignacion`, `id_historia`, `id_medico`, `asignado_por`, `asignado_en`, `estado`) VALUES (4,4,4,1,'2026-11-18 22:01:29','activa');
+    INSERT INTO `historia_medico` (`id_asignacion`, `id_historia`, `id_medico`, `asignado_por`, `asignado_en`, `estado`) VALUES (5,5,2,1,'2026-11-18 22:01:29','activa');
+    INSERT INTO `historia_medico` (`id_asignacion`, `id_historia`, `id_medico`, `asignado_por`, `asignado_en`, `estado`) VALUES (6,6,4,1,'2026-11-18 22:01:29','activa');
+    INSERT INTO `historia_medico` (`id_asignacion`, `id_historia`, `id_medico`, `asignado_por`, `asignado_en`, `estado`) VALUES (7,7,5,1,'2026-11-18 22:01:29','activa');
+    INSERT INTO `historia_medico` (`id_asignacion`, `id_historia`, `id_medico`, `asignado_por`, `asignado_en`, `estado`) VALUES (8,8,1,1,'2026-11-18 22:01:29','activa');
+    INSERT INTO `historia_medico` (`id_asignacion`, `id_historia`, `id_medico`, `asignado_por`, `asignado_en`, `estado`) VALUES (9,9,4,1,'2026-11-18 22:01:29','activa');
+    INSERT INTO `historia_medico` (`id_asignacion`, `id_historia`, `id_medico`, `asignado_por`, `asignado_en`, `estado`) VALUES (10,10,2,1,'2026-11-18 22:01:29','activa');
+    INSERT INTO `historia_medico` (`id_asignacion`, `id_historia`, `id_medico`, `asignado_por`, `asignado_en`, `estado`) VALUES (11,11,5,1,'2026-11-18 22:01:29','activa');
+    INSERT INTO `historia_medico` (`id_asignacion`, `id_historia`, `id_medico`, `asignado_por`, `asignado_en`, `estado`) VALUES (12,12,6,1,'2026-11-18 22:01:29','activa');
+    INSERT INTO `historia_medico` (`id_asignacion`, `id_historia`, `id_medico`, `asignado_por`, `asignado_en`, `estado`) VALUES (13,13,3,1,'2026-11-18 22:01:29','activa');
+    INSERT INTO `historia_medico` (`id_asignacion`, `id_historia`, `id_medico`, `asignado_por`, `asignado_en`, `estado`) VALUES (14,14,4,1,'2026-11-18 22:01:29','activa');
+    INSERT INTO `historia_medico` (`id_asignacion`, `id_historia`, `id_medico`, `asignado_por`, `asignado_en`, `estado`) VALUES (15,15,1,1,'2026-11-18 22:01:29','activa');
+    INSERT INTO `historia_medico` (`id_asignacion`, `id_historia`, `id_medico`, `asignado_por`, `asignado_en`, `estado`) VALUES (24,9,6,1,'2026-11-18 22:01:29','activa');
+
+    INSERT INTO `historias_clinicas` (`id_historia`, `id_paciente`, `numero_historia`, `fecha_apertura`, `estado`) VALUES (1,1,'DEMO-HC-0001','1994-03-12 09:00:00','activa');
+    INSERT INTO `historias_clinicas` (`id_historia`, `id_paciente`, `numero_historia`, `fecha_apertura`, `estado`) VALUES (2,2,'DEMO-HC-0002','1988-07-24 09:00:00','activa');
+    INSERT INTO `historias_clinicas` (`id_historia`, `id_paciente`, `numero_historia`, `fecha_apertura`, `estado`) VALUES (3,3,'DEMO-HC-0003','2001-11-05 09:00:00','activa');
+    INSERT INTO `historias_clinicas` (`id_historia`, `id_paciente`, `numero_historia`, `fecha_apertura`, `estado`) VALUES (4,4,'DEMO-HC-0004','1979-01-30 09:00:00','activa');
+    INSERT INTO `historias_clinicas` (`id_historia`, `id_paciente`, `numero_historia`, `fecha_apertura`, `estado`) VALUES (5,5,'DEMO-HC-0005','2012-06-16 09:00:00','activa');
+    INSERT INTO `historias_clinicas` (`id_historia`, `id_paciente`, `numero_historia`, `fecha_apertura`, `estado`) VALUES (6,6,'DEMO-HC-0006','1966-09-08 09:00:00','activa');
+    INSERT INTO `historias_clinicas` (`id_historia`, `id_paciente`, `numero_historia`, `fecha_apertura`, `estado`) VALUES (7,7,'DEMO-HC-0007','1998-02-19 09:00:00','activa');
+    INSERT INTO `historias_clinicas` (`id_historia`, `id_paciente`, `numero_historia`, `fecha_apertura`, `estado`) VALUES (8,8,'DEMO-HC-0008','1990-10-03 09:00:00','activa');
+    INSERT INTO `historias_clinicas` (`id_historia`, `id_paciente`, `numero_historia`, `fecha_apertura`, `estado`) VALUES (9,9,'DEMO-HC-0009','1983-05-28 09:00:00','activa');
+    INSERT INTO `historias_clinicas` (`id_historia`, `id_paciente`, `numero_historia`, `fecha_apertura`, `estado`) VALUES (10,10,'DEMO-HC-0010','2008-12-11 09:00:00','activa');
+    INSERT INTO `historias_clinicas` (`id_historia`, `id_paciente`, `numero_historia`, `fecha_apertura`, `estado`) VALUES (11,11,'DEMO-HC-0011','1972-04-21 09:00:00','activa');
+    INSERT INTO `historias_clinicas` (`id_historia`, `id_paciente`, `numero_historia`, `fecha_apertura`, `estado`) VALUES (12,12,'DEMO-HC-0012','1958-08-14 09:00:00','activa');
+    INSERT INTO `historias_clinicas` (`id_historia`, `id_paciente`, `numero_historia`, `fecha_apertura`, `estado`) VALUES (13,13,'DEMO-HC-0013','1995-07-09 09:00:00','activa');
+    INSERT INTO `historias_clinicas` (`id_historia`, `id_paciente`, `numero_historia`, `fecha_apertura`, `estado`) VALUES (14,14,'DEMO-HC-0014','1986-01-17 09:00:00','activa');
+    INSERT INTO `historias_clinicas` (`id_historia`, `id_paciente`, `numero_historia`, `fecha_apertura`, `estado`) VALUES (15,15,'DEMO-HC-0015','2003-09-30 09:00:00','activa');
+
+    INSERT INTO `medicamentos` (`id_medicamento`, `nombre`, `concentracion`, `forma_farmaceutica`, `codigo_catalogo`) VALUES (1,'Acetaminofén','500 mg','Tableta','DEMO-MED-01');
+    INSERT INTO `medicamentos` (`id_medicamento`, `nombre`, `concentracion`, `forma_farmaceutica`, `codigo_catalogo`) VALUES (2,'Omeprazol','20 mg','Cápsula','DEMO-MED-02');
+    INSERT INTO `medicamentos` (`id_medicamento`, `nombre`, `concentracion`, `forma_farmaceutica`, `codigo_catalogo`) VALUES (3,'Hidrocortisona','1 %','Crema','DEMO-MED-03');
+
+    INSERT INTO `medico_especialidad` (`id_medico`, `id_especialidad`) VALUES (1,1);
+    INSERT INTO `medico_especialidad` (`id_medico`, `id_especialidad`) VALUES (2,3);
+    INSERT INTO `medico_especialidad` (`id_medico`, `id_especialidad`) VALUES (3,6);
+    INSERT INTO `medico_especialidad` (`id_medico`, `id_especialidad`) VALUES (4,2);
+    INSERT INTO `medico_especialidad` (`id_medico`, `id_especialidad`) VALUES (5,4);
+    INSERT INTO `medico_especialidad` (`id_medico`, `id_especialidad`) VALUES (6,5);
+
+    INSERT INTO `medicos` (`id_medico`, `id_usuario`, `numero_registro_profesional`, `activo`) VALUES (1,2,'DEMO-RM-001',1);
+    INSERT INTO `medicos` (`id_medico`, `id_usuario`, `numero_registro_profesional`, `activo`) VALUES (2,3,'DEMO-RM-002',1);
+    INSERT INTO `medicos` (`id_medico`, `id_usuario`, `numero_registro_profesional`, `activo`) VALUES (3,4,'DEMO-RM-003',1);
+    INSERT INTO `medicos` (`id_medico`, `id_usuario`, `numero_registro_profesional`, `activo`) VALUES (4,5,'DEMO-RM-004',1);
+    INSERT INTO `medicos` (`id_medico`, `id_usuario`, `numero_registro_profesional`, `activo`) VALUES (5,6,'DEMO-RM-005',1);
+    INSERT INTO `medicos` (`id_medico`, `id_usuario`, `numero_registro_profesional`, `activo`) VALUES (6,7,'DEMO-RM-006',1);
+
+    INSERT INTO `orden_examen_detalle` (`id_orden_detalle`, `id_orden`, `id_examen`, `estado`, `resultado_resumen`, `fecha_resultado`) VALUES (1,1,1,'solicitado',NULL,NULL);
+    INSERT INTO `orden_examen_detalle` (`id_orden_detalle`, `id_orden`, `id_examen`, `estado`, `resultado_resumen`, `fecha_resultado`) VALUES (2,2,2,'informado','Resultado dentro de parámetros de referencia en los componentes evaluados; interpretación a cargo del profesional tratante.','2026-02-02 12:00:00');
+    INSERT INTO `orden_examen_detalle` (`id_orden_detalle`, `id_orden`, `id_examen`, `estado`, `resultado_resumen`, `fecha_resultado`) VALUES (3,3,3,'en_proceso',NULL,NULL);
+    INSERT INTO `orden_examen_detalle` (`id_orden_detalle`, `id_orden`, `id_examen`, `estado`, `resultado_resumen`, `fecha_resultado`) VALUES (4,4,2,'informado','Resultado dentro de parámetros de referencia en los componentes evaluados; interpretación a cargo del profesional tratante.','2026-03-20 12:00:00');
+
+    INSERT INTO `ordenes_examen` (`id_orden`, `id_consulta`, `fecha_emision`, `observaciones`) VALUES (1,4,'2026-01-11 10:00:00','Orden de demostración para revisión clínica.');
+    INSERT INTO `ordenes_examen` (`id_orden`, `id_consulta`, `fecha_emision`, `observaciones`) VALUES (2,9,'2026-02-02 10:00:00','Orden de demostración para revisión clínica.');
+    INSERT INTO `ordenes_examen` (`id_orden`, `id_consulta`, `fecha_emision`, `observaciones`) VALUES (3,12,'2026-02-11 10:00:00','Orden de demostración para revisión clínica.');
+    INSERT INTO `ordenes_examen` (`id_orden`, `id_consulta`, `fecha_emision`, `observaciones`) VALUES (4,23,'2026-03-20 10:00:00','Orden de demostración para revisión clínica.');
+
+    INSERT INTO `paciente_alergia` (`id_paciente_alergia`, `id_paciente`, `id_alergia`, `reaccion`, `severidad`, `registrada_en`) VALUES (1,1,1,'Estornudos y rinorrea estacionales','leve','2026-11-18 22:01:29');
+    INSERT INTO `paciente_alergia` (`id_paciente_alergia`, `id_paciente`, `id_alergia`, `reaccion`, `severidad`, `registrada_en`) VALUES (2,3,3,'Prurito y enrojecimiento localizado','leve','2026-11-18 22:01:29');
+    INSERT INTO `paciente_alergia` (`id_paciente_alergia`, `id_paciente`, `id_alergia`, `reaccion`, `severidad`, `registrada_en`) VALUES (3,13,3,'Prurito y enrojecimiento localizado','leve','2026-11-18 22:01:29');
+    INSERT INTO `paciente_alergia` (`id_paciente_alergia`, `id_paciente`, `id_alergia`, `reaccion`, `severidad`, `registrada_en`) VALUES (4,14,2,'Urticaria localizada referida tras exposición.','leve','2026-11-18 22:01:29');
+
+    INSERT INTO `paciente_antecedente` (`id_paciente_antecedente`, `id_paciente`, `id_antecedente`, `tipo`, `parentesco`, `detalle`, `fecha_referencia`, `registrado_en`) VALUES (1,4,1,'personal',NULL,'En seguimiento clínico referido por el paciente.',NULL,'2026-11-18 22:01:29');
+    INSERT INTO `paciente_antecedente` (`id_paciente_antecedente`, `id_paciente`, `id_antecedente`, `tipo`, `parentesco`, `detalle`, `fecha_referencia`, `registrado_en`) VALUES (2,6,4,'quirurgico',NULL,'Apendicectomía previa, sin complicaciones referidas.',NULL,'2026-11-18 22:01:29');
+    INSERT INTO `paciente_antecedente` (`id_paciente_antecedente`, `id_paciente`, `id_antecedente`, `tipo`, `parentesco`, `detalle`, `fecha_referencia`, `registrado_en`) VALUES (3,7,5,'habito',NULL,'Realiza caminatas varias veces por semana, según refiere.',NULL,'2026-11-18 22:01:29');
+    INSERT INTO `paciente_antecedente` (`id_paciente_antecedente`, `id_paciente`, `id_antecedente`, `tipo`, `parentesco`, `detalle`, `fecha_referencia`, `registrado_en`) VALUES (4,9,6,'familiar',NULL,'Madre con antecedente de hipertensión.',NULL,'2026-11-18 22:01:29');
+    INSERT INTO `paciente_antecedente` (`id_paciente_antecedente`, `id_paciente`, `id_antecedente`, `tipo`, `parentesco`, `detalle`, `fecha_referencia`, `registrado_en`) VALUES (5,12,1,'personal',NULL,'En seguimiento clínico referido por el paciente.',NULL,'2026-11-18 22:01:29');
+    INSERT INTO `paciente_antecedente` (`id_paciente_antecedente`, `id_paciente`, `id_antecedente`, `tipo`, `parentesco`, `detalle`, `fecha_referencia`, `registrado_en`) VALUES (6,12,7,'farmacologico',NULL,'Tratamiento habitual referido; requiere conciliación en cada control.',NULL,'2026-11-18 22:01:29');
+
+    INSERT INTO `pacientes` (`id_paciente`, `id_usuario`, `tipo_documento`, `numero_documento`, `nombres`, `apellidos`, `fecha_nacimiento`, `sexo_registrado`, `telefono`, `email`, `direccion`, `grupo_sanguineo`, `creado_en`) VALUES (1,NULL,'DEMO','DEMO-0001','Valentina','Montoya','1994-03-12','Femenino','0000000000','valentina.montoya@example.com','Sector residencial, Medellín','O+','2026-11-18 22:01:29');
+    INSERT INTO `pacientes` (`id_paciente`, `id_usuario`, `tipo_documento`, `numero_documento`, `nombres`, `apellidos`, `fecha_nacimiento`, `sexo_registrado`, `telefono`, `email`, `direccion`, `grupo_sanguineo`, `creado_en`) VALUES (2,NULL,'DEMO','DEMO-0002','Samuel','Restrepo','1988-07-24','Masculino','0000000000','samuel.restrepo@example.com','Sector residencial, Medellín','A+','2026-11-18 22:01:29');
+    INSERT INTO `pacientes` (`id_paciente`, `id_usuario`, `tipo_documento`, `numero_documento`, `nombres`, `apellidos`, `fecha_nacimiento`, `sexo_registrado`, `telefono`, `email`, `direccion`, `grupo_sanguineo`, `creado_en`) VALUES (3,NULL,'DEMO','DEMO-0003','Lucía','Vélez','2001-11-05','Femenino','0000000000','lucia.vélez@example.com','Sector residencial, Medellín','B+','2026-11-18 22:01:29');
+    INSERT INTO `pacientes` (`id_paciente`, `id_usuario`, `tipo_documento`, `numero_documento`, `nombres`, `apellidos`, `fecha_nacimiento`, `sexo_registrado`, `telefono`, `email`, `direccion`, `grupo_sanguineo`, `creado_en`) VALUES (4,NULL,'DEMO','DEMO-0004','Tomás','Arango','1979-01-30','Masculino','0000000000','tomas.arango@example.com','Sector residencial, Medellín','AB+','2026-11-18 22:01:29');
+    INSERT INTO `pacientes` (`id_paciente`, `id_usuario`, `tipo_documento`, `numero_documento`, `nombres`, `apellidos`, `fecha_nacimiento`, `sexo_registrado`, `telefono`, `email`, `direccion`, `grupo_sanguineo`, `creado_en`) VALUES (5,NULL,'DEMO','DEMO-0005','Mariana','Ospina','2012-06-16','Femenino','0000000000','mariana.ospina@example.com','Sector residencial, Medellín','O-','2026-11-18 22:01:29');
+    INSERT INTO `pacientes` (`id_paciente`, `id_usuario`, `tipo_documento`, `numero_documento`, `nombres`, `apellidos`, `fecha_nacimiento`, `sexo_registrado`, `telefono`, `email`, `direccion`, `grupo_sanguineo`, `creado_en`) VALUES (6,NULL,'DEMO','DEMO-0006','Nicolás','Quintero','1966-09-08','Masculino','0000000000','nicolas.quintero@example.com','Sector residencial, Medellín','A-','2026-11-18 22:01:29');
+    INSERT INTO `pacientes` (`id_paciente`, `id_usuario`, `tipo_documento`, `numero_documento`, `nombres`, `apellidos`, `fecha_nacimiento`, `sexo_registrado`, `telefono`, `email`, `direccion`, `grupo_sanguineo`, `creado_en`) VALUES (7,NULL,'DEMO','DEMO-0007','Isabella','Castaño','1998-02-19','Femenino','0000000000','isabella.castaño@example.com','Sector residencial, Medellín','A+','2026-11-18 22:01:29');
+    INSERT INTO `pacientes` (`id_paciente`, `id_usuario`, `tipo_documento`, `numero_documento`, `nombres`, `apellidos`, `fecha_nacimiento`, `sexo_registrado`, `telefono`, `email`, `direccion`, `grupo_sanguineo`, `creado_en`) VALUES (8,NULL,'DEMO','DEMO-0008','Julián','Mejía','1990-10-03','Masculino','0000000000','julian.mejía@example.com','Sector residencial, Medellín','O+','2026-11-18 22:01:29');
+    INSERT INTO `pacientes` (`id_paciente`, `id_usuario`, `tipo_documento`, `numero_documento`, `nombres`, `apellidos`, `fecha_nacimiento`, `sexo_registrado`, `telefono`, `email`, `direccion`, `grupo_sanguineo`, `creado_en`) VALUES (9,NULL,'DEMO','DEMO-0009','Sara','Londoño','1983-05-28','Femenino','0000000000','sara.londoño@example.com','Sector residencial, Medellín','B-','2026-11-18 22:01:29');
+    INSERT INTO `pacientes` (`id_paciente`, `id_usuario`, `tipo_documento`, `numero_documento`, `nombres`, `apellidos`, `fecha_nacimiento`, `sexo_registrado`, `telefono`, `email`, `direccion`, `grupo_sanguineo`, `creado_en`) VALUES (10,NULL,'DEMO','DEMO-0010','Emilio','Giraldo','2008-12-11','Masculino','0000000000','emilio.giraldo@example.com','Sector residencial, Medellín','A+','2026-11-18 22:01:29');
+    INSERT INTO `pacientes` (`id_paciente`, `id_usuario`, `tipo_documento`, `numero_documento`, `nombres`, `apellidos`, `fecha_nacimiento`, `sexo_registrado`, `telefono`, `email`, `direccion`, `grupo_sanguineo`, `creado_en`) VALUES (11,NULL,'DEMO','DEMO-0011','Catalina','Restrepo','1972-04-21','Femenino','0000000000','catalina.restrepo@example.com','Sector residencial, Medellín','O+','2026-11-18 22:01:29');
+    INSERT INTO `pacientes` (`id_paciente`, `id_usuario`, `tipo_documento`, `numero_documento`, `nombres`, `apellidos`, `fecha_nacimiento`, `sexo_registrado`, `telefono`, `email`, `direccion`, `grupo_sanguineo`, `creado_en`) VALUES (12,NULL,'DEMO','DEMO-0012','Manuel','Cárdenas','1958-08-14','Masculino','0000000000','manuel.cárdenas@example.com','Sector residencial, Medellín','B+','2026-11-18 22:01:29');
+    INSERT INTO `pacientes` (`id_paciente`, `id_usuario`, `tipo_documento`, `numero_documento`, `nombres`, `apellidos`, `fecha_nacimiento`, `sexo_registrado`, `telefono`, `email`, `direccion`, `grupo_sanguineo`, `creado_en`) VALUES (13,NULL,'DEMO','DEMO-0013','Antonia','Pardo','1995-07-09','Femenino','0000000000','antonia.pardo@example.com','Sector residencial, Medellín','AB-','2026-11-18 22:01:29');
+    INSERT INTO `pacientes` (`id_paciente`, `id_usuario`, `tipo_documento`, `numero_documento`, `nombres`, `apellidos`, `fecha_nacimiento`, `sexo_registrado`, `telefono`, `email`, `direccion`, `grupo_sanguineo`, `creado_en`) VALUES (14,NULL,'DEMO','DEMO-0014','Simón','Valencia','1986-01-17','Masculino','0000000000','simon.valencia@example.com','Sector residencial, Medellín','O-','2026-11-18 22:01:29');
+    INSERT INTO `pacientes` (`id_paciente`, `id_usuario`, `tipo_documento`, `numero_documento`, `nombres`, `apellidos`, `fecha_nacimiento`, `sexo_registrado`, `telefono`, `email`, `direccion`, `grupo_sanguineo`, `creado_en`) VALUES (15,NULL,'DEMO','DEMO-0015','Gabriela','Soto','2003-09-30','Femenino','0000000000','gabriela.soto@example.com','Sector residencial, Medellín','A-','2026-11-18 22:01:29');
+
+    INSERT INTO `receta_detalle` (`id_receta_detalle`, `id_receta`, `id_medicamento`, `dosis`, `via_administracion`, `frecuencia`, `duracion`, `cantidad`, `indicaciones`) VALUES (1,1,1,'500 mg','Oral','Cada 6 horas si es necesario','Hasta 3 días','12 tabletas','No exceder 3 g en 24 horas; evitar duplicar productos que contengan acetaminofén.');
+    INSERT INTO `receta_detalle` (`id_receta_detalle`, `id_receta`, `id_medicamento`, `dosis`, `via_administracion`, `frecuencia`, `duracion`, `cantidad`, `indicaciones`) VALUES (2,2,2,'20 mg','Oral','Una vez al día según valoración','14 días','14 cápsulas','Registro orientativo sujeto a validación profesional.');
+    INSERT INTO `receta_detalle` (`id_receta_detalle`, `id_receta`, `id_medicamento`, `dosis`, `via_administracion`, `frecuencia`, `duracion`, `cantidad`, `indicaciones`) VALUES (3,3,3,'Aplicación tópica','Cutánea','Capa fina según valoración','Hasta 5 días','1 tubo','Evitar uso extenso o en piel lesionada; validar indicación profesional.');
+
+    INSERT INTO `recetas` (`id_receta`, `id_consulta`, `fecha_emision`, `indicaciones_generales`) VALUES (1,2,'2026-01-05 10:00:00','Registro de demostración; cualquier tratamiento requiere valoración y validación profesional.');
+    INSERT INTO `recetas` (`id_receta`, `id_consulta`, `fecha_emision`, `indicaciones_generales`) VALUES (2,8,'2026-01-23 10:00:00','Registro de demostración; cualquier tratamiento requiere valoración y validación profesional.');
+    INSERT INTO `recetas` (`id_receta`, `id_consulta`, `fecha_emision`, `indicaciones_generales`) VALUES (3,13,'2026-02-14 10:00:00','Registro de demostración; cualquier tratamiento requiere valoración y validación profesional.');
+
+    INSERT INTO `roles` (`id_rol`, `nombre`, `descripcion`) VALUES (1,'Administrador',NULL);
+    INSERT INTO `roles` (`id_rol`, `nombre`, `descripcion`) VALUES (2,'Médico',NULL);
+    INSERT INTO `roles` (`id_rol`, `nombre`, `descripcion`) VALUES (3,'Personal administrativo',NULL);
+    INSERT INTO `roles` (`id_rol`, `nombre`, `descripcion`) VALUES (4,'Paciente',NULL);
+
+    INSERT INTO `schema_migrations` (`id`, `applied_at`) VALUES ('001_clinical_amendments','2026-11-18 22:01:22');
+    INSERT INTO `schema_migrations` (`id`, `applied_at`) VALUES ('002_historia_medico_assignments','2026-11-18 22:01:22');
+    INSERT INTO `schema_migrations` (`id`, `applied_at`) VALUES ('003_password_recovery','2026-11-18 22:01:22');
+    INSERT INTO `schema_migrations` (`id`, `applied_at`) VALUES ('004_remove_password_recovery','2026-11-18 22:01:22');
+    INSERT INTO `schema_migrations` (`id`, `applied_at`) VALUES ('005_demo_seed_registry','2026-11-18 22:01:22');
+
+    INSERT INTO `signos_vitales` (`id_signos`, `id_consulta`, `medido_en`, `presion_sistolica`, `presion_diastolica`, `frecuencia_cardiaca`, `frecuencia_respiratoria`, `temperatura_c`, `peso_kg`, `talla_cm`, `saturacion_oxigeno_pct`) VALUES (1,1,'2026-01-02 10:00:00',116,72,68,15,36.3,55.00,150.00,97.00);
+    INSERT INTO `signos_vitales` (`id_signos`, `id_consulta`, `medido_en`, `presion_sistolica`, `presion_diastolica`, `frecuencia_cardiaca`, `frecuencia_respiratoria`, `temperatura_c`, `peso_kg`, `talla_cm`, `saturacion_oxigeno_pct`) VALUES (2,2,'2026-01-05 10:00:00',117,73,69,16,36.4,62.00,155.00,98.00);
+    INSERT INTO `signos_vitales` (`id_signos`, `id_consulta`, `medido_en`, `presion_sistolica`, `presion_diastolica`, `frecuencia_cardiaca`, `frecuencia_respiratoria`, `temperatura_c`, `peso_kg`, `talla_cm`, `saturacion_oxigeno_pct`) VALUES (3,3,'2026-01-08 10:00:00',118,74,70,17,36.5,69.00,160.00,99.00);
+    INSERT INTO `signos_vitales` (`id_signos`, `id_consulta`, `medido_en`, `presion_sistolica`, `presion_diastolica`, `frecuencia_cardiaca`, `frecuencia_respiratoria`, `temperatura_c`, `peso_kg`, `talla_cm`, `saturacion_oxigeno_pct`) VALUES (4,4,'2026-01-11 10:00:00',146,92,71,18,36.6,76.00,165.00,97.00);
+    INSERT INTO `signos_vitales` (`id_signos`, `id_consulta`, `medido_en`, `presion_sistolica`, `presion_diastolica`, `frecuencia_cardiaca`, `frecuencia_respiratoria`, `temperatura_c`, `peso_kg`, `talla_cm`, `saturacion_oxigeno_pct`) VALUES (5,5,'2026-01-14 10:00:00',120,76,72,19,36.7,46.00,154.00,98.00);
+    INSERT INTO `signos_vitales` (`id_signos`, `id_consulta`, `medido_en`, `presion_sistolica`, `presion_diastolica`, `frecuencia_cardiaca`, `frecuencia_respiratoria`, `temperatura_c`, `peso_kg`, `talla_cm`, `saturacion_oxigeno_pct`) VALUES (6,6,'2026-01-17 10:00:00',121,77,73,15,36.3,90.00,175.00,99.00);
+    INSERT INTO `signos_vitales` (`id_signos`, `id_consulta`, `medido_en`, `presion_sistolica`, `presion_diastolica`, `frecuencia_cardiaca`, `frecuencia_respiratoria`, `temperatura_c`, `peso_kg`, `talla_cm`, `saturacion_oxigeno_pct`) VALUES (7,7,'2026-01-20 10:00:00',122,78,74,16,36.4,55.00,150.00,97.00);
+    INSERT INTO `signos_vitales` (`id_signos`, `id_consulta`, `medido_en`, `presion_sistolica`, `presion_diastolica`, `frecuencia_cardiaca`, `frecuencia_respiratoria`, `temperatura_c`, `peso_kg`, `talla_cm`, `saturacion_oxigeno_pct`) VALUES (8,8,'2026-01-23 10:00:00',123,72,75,17,36.5,62.00,155.00,98.00);
+    INSERT INTO `signos_vitales` (`id_signos`, `id_consulta`, `medido_en`, `presion_sistolica`, `presion_diastolica`, `frecuencia_cardiaca`, `frecuencia_respiratoria`, `temperatura_c`, `peso_kg`, `talla_cm`, `saturacion_oxigeno_pct`) VALUES (9,9,'2026-02-02 10:00:00',124,73,76,18,36.6,69.00,160.00,99.00);
+    INSERT INTO `signos_vitales` (`id_signos`, `id_consulta`, `medido_en`, `presion_sistolica`, `presion_diastolica`, `frecuencia_cardiaca`, `frecuencia_respiratoria`, `temperatura_c`, `peso_kg`, `talla_cm`, `saturacion_oxigeno_pct`) VALUES (10,10,'2026-02-05 10:00:00',116,74,77,19,36.7,46.00,154.00,97.00);
+    INSERT INTO `signos_vitales` (`id_signos`, `id_consulta`, `medido_en`, `presion_sistolica`, `presion_diastolica`, `frecuencia_cardiaca`, `frecuencia_respiratoria`, `temperatura_c`, `peso_kg`, `talla_cm`, `saturacion_oxigeno_pct`) VALUES (11,11,'2026-02-08 10:00:00',117,75,78,15,36.3,83.00,170.00,98.00);
+    INSERT INTO `signos_vitales` (`id_signos`, `id_consulta`, `medido_en`, `presion_sistolica`, `presion_diastolica`, `frecuencia_cardiaca`, `frecuencia_respiratoria`, `temperatura_c`, `peso_kg`, `talla_cm`, `saturacion_oxigeno_pct`) VALUES (12,12,'2026-02-11 10:00:00',146,92,79,16,36.4,90.00,175.00,99.00);
+    INSERT INTO `signos_vitales` (`id_signos`, `id_consulta`, `medido_en`, `presion_sistolica`, `presion_diastolica`, `frecuencia_cardiaca`, `frecuencia_respiratoria`, `temperatura_c`, `peso_kg`, `talla_cm`, `saturacion_oxigeno_pct`) VALUES (13,13,'2026-02-14 10:00:00',119,77,80,17,36.5,55.00,150.00,97.00);
+    INSERT INTO `signos_vitales` (`id_signos`, `id_consulta`, `medido_en`, `presion_sistolica`, `presion_diastolica`, `frecuencia_cardiaca`, `frecuencia_respiratoria`, `temperatura_c`, `peso_kg`, `talla_cm`, `saturacion_oxigeno_pct`) VALUES (14,14,'2026-02-17 10:00:00',120,78,81,18,36.6,62.00,155.00,98.00);
+    INSERT INTO `signos_vitales` (`id_signos`, `id_consulta`, `medido_en`, `presion_sistolica`, `presion_diastolica`, `frecuencia_cardiaca`, `frecuencia_respiratoria`, `temperatura_c`, `peso_kg`, `talla_cm`, `saturacion_oxigeno_pct`) VALUES (15,15,'2026-02-20 10:00:00',121,72,82,19,36.7,69.00,160.00,99.00);
+    INSERT INTO `signos_vitales` (`id_signos`, `id_consulta`, `medido_en`, `presion_sistolica`, `presion_diastolica`, `frecuencia_cardiaca`, `frecuencia_respiratoria`, `temperatura_c`, `peso_kg`, `talla_cm`, `saturacion_oxigeno_pct`) VALUES (16,16,'2026-02-23 10:00:00',122,73,68,15,36.3,76.00,165.00,97.00);
+    INSERT INTO `signos_vitales` (`id_signos`, `id_consulta`, `medido_en`, `presion_sistolica`, `presion_diastolica`, `frecuencia_cardiaca`, `frecuencia_respiratoria`, `temperatura_c`, `peso_kg`, `talla_cm`, `saturacion_oxigeno_pct`) VALUES (17,17,'2026-03-02 10:00:00',123,74,69,16,36.4,83.00,170.00,98.00);
+    INSERT INTO `signos_vitales` (`id_signos`, `id_consulta`, `medido_en`, `presion_sistolica`, `presion_diastolica`, `frecuencia_cardiaca`, `frecuencia_respiratoria`, `temperatura_c`, `peso_kg`, `talla_cm`, `saturacion_oxigeno_pct`) VALUES (18,18,'2026-03-05 10:00:00',124,75,70,17,36.5,90.00,175.00,99.00);
+    INSERT INTO `signos_vitales` (`id_signos`, `id_consulta`, `medido_en`, `presion_sistolica`, `presion_diastolica`, `frecuencia_cardiaca`, `frecuencia_respiratoria`, `temperatura_c`, `peso_kg`, `talla_cm`, `saturacion_oxigeno_pct`) VALUES (19,19,'2026-03-08 10:00:00',146,92,71,18,36.6,55.00,150.00,97.00);
+    INSERT INTO `signos_vitales` (`id_signos`, `id_consulta`, `medido_en`, `presion_sistolica`, `presion_diastolica`, `frecuencia_cardiaca`, `frecuencia_respiratoria`, `temperatura_c`, `peso_kg`, `talla_cm`, `saturacion_oxigeno_pct`) VALUES (20,20,'2026-03-11 10:00:00',117,77,72,19,36.7,46.00,154.00,98.00);
+    INSERT INTO `signos_vitales` (`id_signos`, `id_consulta`, `medido_en`, `presion_sistolica`, `presion_diastolica`, `frecuencia_cardiaca`, `frecuencia_respiratoria`, `temperatura_c`, `peso_kg`, `talla_cm`, `saturacion_oxigeno_pct`) VALUES (21,21,'2026-03-14 10:00:00',118,78,73,15,36.3,69.00,160.00,99.00);
+    INSERT INTO `signos_vitales` (`id_signos`, `id_consulta`, `medido_en`, `presion_sistolica`, `presion_diastolica`, `frecuencia_cardiaca`, `frecuencia_respiratoria`, `temperatura_c`, `peso_kg`, `talla_cm`, `saturacion_oxigeno_pct`) VALUES (22,22,'2026-03-17 10:00:00',119,72,74,16,36.4,76.00,165.00,97.00);
+    INSERT INTO `signos_vitales` (`id_signos`, `id_consulta`, `medido_en`, `presion_sistolica`, `presion_diastolica`, `frecuencia_cardiaca`, `frecuencia_respiratoria`, `temperatura_c`, `peso_kg`, `talla_cm`, `saturacion_oxigeno_pct`) VALUES (23,23,'2026-03-20 10:00:00',120,73,75,17,36.5,83.00,170.00,98.00);
+    INSERT INTO `signos_vitales` (`id_signos`, `id_consulta`, `medido_en`, `presion_sistolica`, `presion_diastolica`, `frecuencia_cardiaca`, `frecuencia_respiratoria`, `temperatura_c`, `peso_kg`, `talla_cm`, `saturacion_oxigeno_pct`) VALUES (24,24,'2026-03-23 10:00:00',121,74,76,18,36.6,90.00,175.00,99.00);
+
+    INSERT INTO `usuario_rol` (`id_usuario`, `id_rol`) VALUES (1,1);
+    INSERT INTO `usuario_rol` (`id_usuario`, `id_rol`) VALUES (2,2);
+    INSERT INTO `usuario_rol` (`id_usuario`, `id_rol`) VALUES (3,2);
+    INSERT INTO `usuario_rol` (`id_usuario`, `id_rol`) VALUES (4,2);
+    INSERT INTO `usuario_rol` (`id_usuario`, `id_rol`) VALUES (5,2);
+    INSERT INTO `usuario_rol` (`id_usuario`, `id_rol`) VALUES (6,2);
+    INSERT INTO `usuario_rol` (`id_usuario`, `id_rol`) VALUES (7,2);
+    INSERT INTO `usuario_rol` (`id_usuario`, `id_rol`) VALUES (8,1);
+
+    INSERT INTO `usuarios` (`id_usuario`, `nombres`, `apellidos`, `email`, `password_hash`, `estado`, `creado_en`, `actualizado_en`, `session_version`) VALUES (1,'Administración','Clínica','admin.demo@example.test','$2b$12$FRj28OVqYmt0vXkIyY5goeKaO3mfkjVwWz62237AVdt4qJs53iEWO','activo','2026-11-18 22:01:23','2026-11-18 22:01:23',0);
+    INSERT INTO `usuarios` (`id_usuario`, `nombres`, `apellidos`, `email`, `password_hash`, `estado`, `creado_en`, `actualizado_en`, `session_version`) VALUES (2,'Laura','Pineda','laura.pineda@example.com','$2b$12$KwyDR8qK6SpBsKkNyd3K5eL8plN12hrwGlAbM8/4RgpAC8cZhXC6i','activo','2026-11-18 22:01:25','2026-11-18 22:01:25',0);
+    INSERT INTO `usuarios` (`id_usuario`, `nombres`, `apellidos`, `email`, `password_hash`, `estado`, `creado_en`, `actualizado_en`, `session_version`) VALUES (3,'Mateo','Salas','mateo.salas@example.com','$2b$12$jYSqI00bFhsWDnaugubUP.ZDVCSvT.1oetviQKtaqHrJYvV1e02su','activo','2026-11-18 22:01:26','2026-11-18 22:01:26',0);
+    INSERT INTO `usuarios` (`id_usuario`, `nombres`, `apellidos`, `email`, `password_hash`, `estado`, `creado_en`, `actualizado_en`, `session_version`) VALUES (4,'Inés','Cárdenas','ines.cárdenas@example.com','$2b$12$BPLDDmqvKS1MLbfofAbP4eUyNiEPYBek23G71t3HzcO8kpb8hj3uW','activo','2026-11-18 22:01:27','2026-11-18 22:01:27',0);
+    INSERT INTO `usuarios` (`id_usuario`, `nombres`, `apellidos`, `email`, `password_hash`, `estado`, `creado_en`, `actualizado_en`, `session_version`) VALUES (5,'Andrés','Mejía','andres.mejía@example.com','$2b$12$Fh48FsiAgu23sdZZPjPIXuhlo3bSSYXDoSiK7Xuk0zyzQ8QD2vyi.','activo','2026-11-18 22:01:28','2026-11-18 22:01:28',0);
+    INSERT INTO `usuarios` (`id_usuario`, `nombres`, `apellidos`, `email`, `password_hash`, `estado`, `creado_en`, `actualizado_en`, `session_version`) VALUES (6,'Camila','Rojas','camila.rojas@example.com','$2b$12$359CVy3Kj76Ss0C1DnJZYumblr8sUFJTEJK8UPnPO9PsopEqkxx8O','activo','2026-11-18 22:01:28','2026-11-18 22:01:28',0);
+    INSERT INTO `usuarios` (`id_usuario`, `nombres`, `apellidos`, `email`, `password_hash`, `estado`, `creado_en`, `actualizado_en`, `session_version`) VALUES (7,'Felipe','Navarro','felipe.navarro@example.com','$2b$12$HL8HXEB8fNm4R7rsgiOpGutRX9M4IKQSgdwTHYc0ZzjLrCWDDgLue','activo','2026-11-18 22:01:29','2026-11-18 22:01:29',0);
+    INSERT INTO `usuarios` (`id_usuario`, `nombres`, `apellidos`, `email`, `password_hash`, `estado`, `creado_en`, `actualizado_en`, `session_version`) VALUES (8,'Alejandra','Rios','malejaguevara14@gmail.com','$2b$12$FSPUpF025gMOFhmZPBxhM.lqNkkbjVAJw5TSZ6sOs977fKZ1adMgq','activo','2026-11-18 22:01:29','2026-11-18 22:01:29',0);
+    /*!40103 SET TIME_ZONE=@OLD_TIME_ZONE */;
+
+    /*!40101 SET SQL_MODE=@OLD_SQL_MODE */;
+    /*!40014 SET FOREIGN_KEY_CHECKS=@OLD_FOREIGN_KEY_CHECKS */;
+    /*!40111 SET SQL_NOTES=@OLD_SQL_NOTES */;
+
+
+    SET FOREIGN_KEY_CHECKS=1;
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: historia-clinica-db
+  namespace: maria-guevara-rio-dev
+  labels:
+    app.kubernetes.io/part-of: clinica-alejandra-app
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app: historia-clinica-db
+  template:
+    metadata:
+      labels:
+        app: historia-clinica-db
+        app.kubernetes.io/part-of: clinica-alejandra-app
+    spec:
+      containers:
+        - name: mysql
+          image: quay.io/sclorg/mysql-84-c9s:20261118
+          command: [/bin/bash, -ec]
+          args:
+            - |
+              # Configuración incorporada: no hay variables que crear en la consola.
+              export MYSQL_ROOT_PASSWORD='ClinicaSoloDemoRoot2026A'
+              export MYSQL_MAX_CONNECTIONS=50
+              export MYSQL_INNODB_BUFFER_POOL_SIZE=64M
+              export MYSQL_KEY_BUFFER_SIZE=8M
+              export MYSQL_READ_BUFFER_SIZE=1M
+              exec run-mysqld
+          ports:
+            - name: mysql
+              containerPort: 3306
+          volumeMounts:
+            - name: data
+              mountPath: /var/lib/mysql/data
+            - name: init
+              mountPath: /opt/app-root/src/mysql-init
+              readOnly: true
+          startupProbe:
+            tcpSocket: {port: mysql}
+            periodSeconds: 5
+            failureThreshold: 120
+          readinessProbe:
+            tcpSocket: {port: mysql}
+            periodSeconds: 10
+          livenessProbe:
+            tcpSocket: {port: mysql}
+            periodSeconds: 20
+            failureThreshold: 6
+          securityContext:
+            runAsNonRoot: true
+            allowPrivilegeEscalation: false
+            capabilities: {drop: [ALL]}
+            seccompProfile: {type: RuntimeDefault}
+          resources:
+            requests: {cpu: 100m, memory: 256Mi}
+            limits: {cpu: '1', memory: 768Mi}
+      volumes:
+        - name: data
+          persistentVolumeClaim:
+            claimName: historia-clinica-mysql-data
+        - name: init
+          configMap:
+            name: historia-clinica-mysql-init
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: historia-clinica-db
+  namespace: maria-guevara-rio-dev
+spec:
+  selector:
+    app: historia-clinica-db
+  ports:
+    - name: mysql
+      port: 3306
+      targetPort: mysql

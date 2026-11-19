@@ -37,6 +37,12 @@ También se inició `npm start` en localhost:8080 con la conexión local privada
 
 La evidencia de la prueba completa se guarda localmente en `.validation/report.json` y `.validation/unified-local.png`, excluidas del repositorio.
 
+## Base nueva para Red Hat
+
+Se validaron los siete recursos YAML de `deploy/mysql-demo.yaml` y `deploy/adminer.yaml` con un parser YAML. Se comprobó que el SQL embebido coincide con `sql/redhat-demo.sql` y que el servicio, la cuenta y el PVC coinciden con la configuración de la aplicación. El inicializador se ejecutó con un cliente simulado para comprobar carga inicial, reinicio sin reimportar y rechazo de tablas existentes sin modificar datos.
+
+El SQL extraído del propio YAML se importó en `clinica_redhat_import_test`, una base temporal nueva de XAMPP. Se verificaron 15 pacientes, seis médicos, 15 historias, 24 consultas y 24 registros de signos vitales, sin consultas huérfanas. Se inició la aplicación existente contra esa base: salud HTTP 200, login de Alejandra con rol administrador y los tres listados con sus conteos correctos. Después se retiraron únicamente la base y cuenta de pruebas creadas para esta comprobación. Reporte local: `.validation/redhat-database-report.json`.
+
 ## Límites
 
 No se construyó la imagen de contenedor en este equipo porque no dispone de Docker o Podman. Tampoco se aplicó el YAML al clúster: no hay sesión autenticada de `oc`. Al construir en Red Hat hay que comprobar disponibilidad del MySQL existente y que la cuenta integrada tenga acceso al esquema. Las pruebas locales no validan las credenciales de MySQL remoto.
