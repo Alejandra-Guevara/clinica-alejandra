@@ -723,8 +723,20 @@ spec:
           volumeMounts:
             - name: data
               mountPath: /var/lib/mysql/data
+            # ConfigMaps proyectados usan enlaces simbólicos; SCLorg busca
+            # archivos normales en mysql-init, por eso se monta cada clave
+            # con subPath en vez de montar el directorio completo.
             - name: init
-              mountPath: /opt/app-root/src/mysql-init
+              mountPath: /opt/app-root/src/mysql-init/90-clinica-demo.sh
+              subPath: 90-clinica-demo.sh
+              readOnly: true
+            - name: init
+              mountPath: /opt/app-root/src/mysql-init/access.sql
+              subPath: access.sql
+              readOnly: true
+            - name: init
+              mountPath: /opt/app-root/src/mysql-init/database.sql
+              subPath: database.sql
               readOnly: true
           startupProbe:
             tcpSocket: {port: mysql}

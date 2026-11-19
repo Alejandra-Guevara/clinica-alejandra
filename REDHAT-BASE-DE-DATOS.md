@@ -15,7 +15,7 @@ oc apply -n maria-guevara-rio-dev -f https://raw.githubusercontent.com/Alejandra
 oc rollout status deployment/historia-clinica-db -n maria-guevara-rio-dev --timeout=600s
 ```
 
-El YAML crea MySQL 8.4, el servicio interno `historia-clinica-db:3306`, un volumen persistente de 1 GiB y un inicializador. La configuración está incluida; no debes crear variables ni Secrets manualmente. La imagen utiliza sus variables internas de inicialización, asignadas por el propio comando del YAML.
+El YAML crea MySQL 8.4, el servicio interno `historia-clinica-db:3306`, un volumen persistente de 1 GiB y un inicializador. Los archivos de inicialización se montan individualmente para que la imagen de MySQL los encuentre al iniciar. La configuración está incluida; no debes crear variables ni Secrets manualmente. La imagen utiliza sus variables internas de inicialización, asignadas por el propio comando del YAML.
 
 La primera inicialización crea el esquema `clinica-alejandra`, las tablas actualizadas, cuatro roles, el administrador Alejandra Rios, 15 pacientes, seis médicos, 15 historias y 24 consultas con sus registros relacionados: diagnósticos, signos vitales, recetas, medicamentos, alergias, antecedentes y exámenes. Las contraseñas de aplicación se guardan como hashes bcrypt. Todo el contenido clínico es sintético.
 
