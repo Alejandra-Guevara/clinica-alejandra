@@ -2,6 +2,18 @@
 
 El servicio `clinica-alejandra` reúne React y Express. MySQL necesita su propio almacenamiento persistente. Crear MySQL no separa el frontend del backend ni requiere cambiar su URL.
 
+## Escalar la aplicación
+
+La aplicación usa sesiones compartidas entre réplicas con una clave fija de demostración incluida en el código. En el servicio Knative `clinica-alejandra`, se puede fijar un mínimo de dos instancias y un máximo de cuatro así:
+
+```bash
+oc patch ksvc clinica-alejandra -n maria-guevara-rio-dev --type=merge -p '{"spec":{"template":{"metadata":{"annotations":{"autoscaling.knative.dev/min-scale":"2","autoscaling.knative.dev/max-scale":"4"}}}}'
+```
+
+Knative conserva dos réplicas activas y agrega más cuando sube la cantidad de solicitudes simultáneas, hasta cuatro. Las cuotas disponibles del proyecto también limitan cuántos pods pueden ejecutarse.
+
+MySQL debe conservarse en **una réplica** con su volumen actual. Duplicar el servidor MySQL sobre el mismo PVC no crea una base de datos redundante y puede dañar los archivos. Para varias instancias de base de datos se necesitaría configurar replicación o un clúster MySQL independiente, con almacenamiento para cada nodo.
+
 ## 1. Crear MySQL con tablas y ejemplos
 
 Estos pasos son para un proyecto sin MySQL previo. Si ya existe un servicio `historia-clinica-db` con información que quieras conservar, revisa esa instalación antes de aplicar este manifiesto; no borres sus volúmenes.

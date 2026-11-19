@@ -21,9 +21,10 @@ export function createRuntimeConfig(platform = {}, localSettings = {}) {
   }
   return {
     port: Number(platform.PORT || 8080),
-    // Una sola instancia; la firma se genera en memoria y no necesita un Secret.
-    // Reiniciar/reconstruir el backend requiere iniciar sesión nuevamente.
-    sessionSecret: randomBytes(48).toString('base64url'),
+    // En el clúster todas las réplicas usan la misma firma para aceptar
+    // sesiones emitidas por cualquiera de ellas. En local se genera una clave
+    // aislada para cada proceso de desarrollo.
+    sessionSecret: inCluster ? demoConfig.sessionSecret : randomBytes(48).toString('base64url'),
     secureCookies: inCluster,
     trustProxy: inCluster ? 1 : 0,
     database,
