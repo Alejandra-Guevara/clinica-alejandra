@@ -4,13 +4,13 @@ El servicio `clinica-alejandra` reúne React y Express. MySQL necesita su propio
 
 ## Escalar la aplicación
 
-La aplicación usa sesiones compartidas entre réplicas con una clave fija de demostración incluida en el código. En el servicio Knative `clinica-alejandra`, se puede fijar un mínimo de dos instancias y un máximo de cuatro así:
+La aplicación usa sesiones compartidas entre réplicas con una clave fija de demostración incluida en el código. El servicio Knative actual `clinica-alejandra` está configurado con dos réplicas mínimas y máximas:
 
 ```bash
-oc patch ksvc clinica-alejandra -n maria-guevara-rio-dev --type=merge -p '{"spec":{"template":{"metadata":{"annotations":{"autoscaling.knative.dev/min-scale":"2","autoscaling.knative.dev/max-scale":"4"}}}}'
+oc patch ksvc clinica-alejandra -n maria-guevara-rio-dev --type=merge -p '{"spec":{"template":{"metadata":{"annotations":{"autoscaling.knative.dev/min-scale":"2","autoscaling.knative.dev/max-scale":"2"}}}}'
 ```
 
-Knative conserva dos réplicas activas y agrega más cuando sube la cantidad de solicitudes simultáneas, hasta cuatro. Las cuotas disponibles del proyecto también limitan cuántos pods pueden ejecutarse.
+Knative conserva dos réplicas activas. La revisión confirmada en Red Hat es `clinica-alejandra-00003` y el Deployment administrado correspondiente muestra 2/2 pods disponibles.
 
 MySQL debe conservarse en **una réplica** con su volumen actual. Duplicar el servidor MySQL sobre el mismo PVC no crea una base de datos redundante y puede dañar los archivos. Para varias instancias de base de datos se necesitaría configurar replicación o un clúster MySQL independiente, con almacenamiento para cada nodo.
 
@@ -66,7 +66,7 @@ Los conteos iniciales esperados son **15**, **6** y **24**. Escribe `exit` para 
 Abre la URL de tu aplicación añadiendo `/api/health`:
 
 ```text
-https://clinica-alejandra-maria-guevara-rio-dev.apps.rm3.7wse.p1.openshiftapps.com/api/health
+https://clinica-alejaa-maria-guevara-rio-dev.apps.rm3.7wse.p1.openshiftapps.com/api/health
 ```
 
 Debe responder con HTTP 200 y:

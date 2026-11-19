@@ -18,14 +18,14 @@ scripts/        Validación local automatizada
 1. Selecciona el proyecto `maria-guevara-rio-dev`.
 2. Abre **+ → Importar desde Git** y pega `https://github.com/Alejandra-Guevara/clinica-alejandra.git`.
 3. Selecciona estrategia **Dockerfile**, ruta `Dockerfile`, rama `main` y directorio de contexto `/` (raíz del repositorio).
-4. Usa el nombre **clinica-alejandra**, tipo de recurso **Deployment** y puerto **8080**. Activa una Route con TLS **edge** y redirección de HTTP a HTTPS.
+4. Usa el nombre **clinica-alejandra**, puerto **8080** y activa una Route con TLS **edge** y redirección de HTTP a HTTPS.
 5. No agregues variables, Secrets ni ConfigMaps. Espera a que termine la compilación y abre la URL que dé la Route.
 
-En esa misma dirección se accede a React y a `/api`. El puerto que la plataforma suministra automáticamente también se admite, sin configurarlo a mano. El despliegue usa un solo pod porque la firma de sesión se genera en memoria; tras reiniciar, vuelve a iniciar sesión.
+En esa misma dirección se accede a React y a `/api`. El puerto que la plataforma suministra automáticamente también se admite, sin configurarlo a mano. El despliegue Red Hat actual usa un servicio Knative con dos réplicas; la clave de sesión común está integrada en el código académico.
 
 ## Red Hat: importar el YAML para la clase
 
-El archivo [deploy/openshift.yaml](deploy/openshift.yaml) contiene ImageStream, BuildConfig con el repositorio Git, **un único Deployment con un contenedor**, Service y Route. Es la alternativa al formulario de Git. El nombre `clinica-alejandra` es distinto al de los dos despliegues anteriores.
+El archivo [deploy/openshift.yaml](deploy/openshift.yaml) contiene ImageStream, BuildConfig con el repositorio Git, un Deployment con un contenedor, Service y Route. Es una alternativa declarativa para una instalación nueva. El servicio ya creado desde la consola es Knative; no importes ese manifiesto encima del servicio activo como si fuera una actualización de Knative.
 
 Para aplicarlo y compilar desde la terminal `>_`:
 
@@ -39,6 +39,10 @@ El script no crea otro frontend o backend, no modifica los servicios antiguos y 
 ## Crear MySQL y consultar sus tablas
 
 Si desplegaste la aplicación desde cero y todavía no existe MySQL en Red Hat, sigue [REDHAT-BASE-DE-DATOS.md](REDHAT-BASE-DE-DATOS.md). El manifiesto [deploy/mysql-demo.yaml](deploy/mysql-demo.yaml) crea el almacenamiento persistente, las tablas y los ejemplos completos sin configurar variables manualmente. La aplicación React/Express ya desplegada no necesita reconstruirse.
+
+## Estado confirmado en Red Hat
+
+La salida de `oc` compartida por la propietaria confirma el servicio Knative `clinica-alejandra`, revisión lista `00003`, dos réplicas listas y la ruta `https://clinica-alejaa-maria-guevara-rio-dev.apps.rm3.7wse.p1.openshiftapps.com`. MySQL corre en una réplica con el PVC `historia-clinica-mysql-data` vinculado (1 GiB); el Service interno es `historia-clinica-db:3306` y la imagen `quay.io/sclorg/mysql-84-c9s:20261118`. La configuración de MySQL muestra únicamente los tres archivos de inicialización montados por `subPath`.
 
 ## Usar una base de datos existente
 
