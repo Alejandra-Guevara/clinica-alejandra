@@ -1,0 +1,13 @@
+.git
+**/.git
+**/node_modules
+frontend/dist
+**/.env
+**/.env.*
+**/*.log
+**/test-results
+**/playwright-report
+**/coverage
+*.zip
+*.tar
+backend/local.settings.json

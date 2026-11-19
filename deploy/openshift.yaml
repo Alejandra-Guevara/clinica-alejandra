@@ -1,0 +1,96 @@
+# Un repositorio, un BuildConfig, un Deployment, un contenedor y una URL.
+apiVersion: image.openshift.io/v1
+kind: ImageStream
+metadata:
+  name: clinica-alejandra
+  namespace: maria-guevara-rio-dev
+---
+apiVersion: build.openshift.io/v1
+kind: BuildConfig
+metadata:
+  name: clinica-alejandra
+  namespace: maria-guevara-rio-dev
+spec:
+  runPolicy: Serial
+  source:
+    type: Git
+    git:
+      uri: https://github.com/Alejandra-Guevara/clinica-alejandra.git
+      ref: main
+  strategy:
+    type: Docker
+    dockerStrategy:
+      dockerfilePath: Dockerfile
+  output:
+    to:
+      kind: ImageStreamTag
+      name: clinica-alejandra:latest
+  triggers:
+    - type: ConfigChange
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: clinica-alejandra
+  namespace: maria-guevara-rio-dev
+  annotations:
+    image.openshift.io/triggers: '[{"from":{"kind":"ImageStreamTag","name":"clinica-alejandra:latest"},"fieldPath":"spec.template.spec.containers[?(@.name==\"clinica\")].image"}]'
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: clinica-alejandra
+  template:
+    metadata:
+      labels:
+        app: clinica-alejandra
+    spec:
+      containers:
+        - name: clinica
+          image: image-registry.openshift-image-registry.svc:5000/maria-guevara-rio-dev/clinica-alejandra:latest
+          ports:
+            - name: http
+              containerPort: 8080
+          startupProbe:
+            httpGet: {path: /health, port: http}
+            failureThreshold: 30
+            periodSeconds: 5
+          readinessProbe:
+            httpGet: {path: /health, port: http}
+            periodSeconds: 10
+          livenessProbe:
+            httpGet: {path: /api/live, port: http}
+            periodSeconds: 10
+          securityContext:
+            runAsNonRoot: true
+            allowPrivilegeEscalation: false
+            capabilities: {drop: [ALL]}
+            seccompProfile: {type: RuntimeDefault}
+          resources:
+            requests: {cpu: 100m, memory: 128Mi}
+            limits: {cpu: 500m, memory: 512Mi}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: clinica-alejandra
+  namespace: maria-guevara-rio-dev
+spec:
+  selector:
+    app: clinica-alejandra
+  ports:
+    - name: http
+      port: 8080
+      targetPort: http
+---
+apiVersion: route.openshift.io/v1
+kind: Route
+metadata:
+  name: clinica-alejandra
+  namespace: maria-guevara-rio-dev
+spec:
+  to: {kind: Service, name: clinica-alejandra}
+  port: {targetPort: http}
+  tls:
+    termination: edge
+    insecureEdgeTerminationPolicy: Redirect

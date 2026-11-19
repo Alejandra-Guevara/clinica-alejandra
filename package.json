@@ -1,0 +1,22 @@
+{
+  "name": "clinica-alejandra",
+  "version": "1.0.0",
+  "private": true,
+  "description": "React y Express en un único servicio de OpenShift",
+  "scripts": {
+    "setup": "npm ci --prefix backend && npm ci --prefix frontend",
+    "build": "npm run build --prefix frontend",
+    "start": "node backend/src/server.js",
+    "dev": "node --watch backend/src/server.js",
+    "lint": "npm run lint --prefix backend && npm run lint --prefix frontend",
+    "test": "npm test --prefix backend && npm test --prefix frontend",
+    "test:e2e": "npm run test:e2e --prefix frontend",
+    "test:integration": "npm run test:integration --prefix backend",
+    "validate:local": "node scripts/validate-local.mjs",
+    "db:migrate": "npm run db:migrate --prefix backend",
+    "db:roles": "npm run db:roles --prefix backend",
+    "seed:demo": "npm run seed:demo --prefix backend",
+    "verify:demo": "npm run verify:demo --prefix backend"
+  },
+  "engines": { "node": ">=22" }
+}
